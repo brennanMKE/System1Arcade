@@ -126,6 +126,10 @@ Support/System 1 Arcade/agent` on macOS) and installs Laya there, showing progre
 This needs Python 3.10 or newer, which the app looks for in the usual install locations. Set
 `SYSTEM1_PYTHON` to choose an interpreter that already has Laya.
 
+The built-in agent caches Laya's answers by state and question, since Laya always answers the same
+prompt the same way, so a repeated sentence skips the model. Set `SYSTEM1_LAYA_CACHE=0` to turn the
+cache off, or to a number to change how many answers it keeps (default 10,000).
+
 ### Custom agent
 
 Point the app at your own HTTP service. For every decision the app POSTs a prompt and plays the

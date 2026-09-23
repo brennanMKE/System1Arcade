@@ -145,6 +145,11 @@ python3 -m venv .venv && .venv/bin/pip install laya
 Then use `http://<host>:8000/predict` as the endpoint URL, with batching on. Only expose it on a
 network you trust: the server has no authentication.
 
+The server caches answers by state and question and only sends new ones to the model. `GET /stats`
+reports the cache's hits, misses and hit rate; `--stats-every 10` also prints them every 10 seconds,
+and `--cache-size 0` turns the cache off. The app itself doesn't cache a custom endpoint's answers,
+since another model may not answer the same prompt the same way.
+
 ### TypeSafe Jev
 
 [Jev](https://docs.typesafe.ai/api) uses the same question types and answer format but takes one

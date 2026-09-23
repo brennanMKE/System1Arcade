@@ -33,9 +33,39 @@ with a fixed heuristic, and Laya now plays better than it (see
 | One Space Invaders decision (6 states) | about 63–65 ms, about 15 decisions per second |
 | One Frogger decision (6 states) | about 64–110 ms |
 | One Tetris decision (one state per distinct landing spot, often 10–17) | about 100–130 ms |
+| A Frogger or Space Invaders decision answered from the cache | about 0.3 ms |
 
 All the states for a decision go through Laya as one batch (`agents/laya_batch.py`), so a decision
 costs little more than a single question. Running on the GPU matters: the CPU was 2–10 times slower.
+
+### Answer cache
+
+Laya always gives the same answer to the same prompt, and Frogger and Space Invaders keep repeating
+the same sentences. The Laya server (`agents/laya_server.py`, which the built-in agent runs) and
+`agents/laya_agent.py` cache answers by the exact state and the question, and send only new ones to
+the model, still as one batch. One minute per game through the server, seed 3:
+
+| Game and clock | Cache | Decisions per second | Time per decision | Answers from the cache | Different answers seen |
+|---|---|---|---|---|---|
+| Frogger, realtime | off | 14.1 | 70 ms | — | — |
+| Frogger, realtime | on | 1,087 | 0.3 ms | 99.98% (74 misses in 391,140) | 75 |
+| Space Invaders, realtime | off | 15.1 | 65 ms | — | — |
+| Space Invaders, realtime | on | 837 | 0.4 ms | 99.99% (21 misses in 301,176) | 96 |
+| Frogger, lockstep | off | 12.5 | 77 ms | — | — |
+| Frogger, lockstep | on | 943 | 0.4 ms | 99.96% (130 misses in 339,600) | 131 |
+| Space Invaders, lockstep | off | 14.1 | 69 ms | — | — |
+| Space Invaders, lockstep | on | 799 | 0.4 ms | 99.99% (26 misses in 287,658) | 157 |
+
+With the cache on, the rest of the round trip (HTTP to the game and back) sets the pace; the model
+ran for only 14–103 of about 50,000 decisions per game. The realtime rates include the agent asking
+again before the next frame changes anything. In lockstep, where every decision is a new game step,
+fewer than 160 different answers covered 32 Frogger games and 7 Space Invaders games in a minute.
+Answers from a batch match answers asked alone to four decimal places, so a cached answer is the
+same one the model would give. Tetris repeats too: in 30 seconds of lockstep play, 156 of 313,452
+answers were misses, because its landing-spot sentences come from a small set of phrases.
+
+`GET /stats` on the server reports hits and misses. Set `SYSTEM1_LAYA_CACHE=0` (or pass
+`--cache-size 0`) to turn the cache off.
 
 The agent's default input speed is 6 inputs per second (Settings → Agent input speed), well below
 what Laya can decide, so in normal play the input limit, not the model, sets the pace.
@@ -171,21 +201,20 @@ Frogger scores slightly higher at 6 inputs/s because its safety checks account f
 
 ### Faster decisions
 
-5. **Cache answers.** Laya is deterministic, and Frogger and Space Invaders repeat the same
-   sentences many times ("No bomb is falling toward the cannon."). Caching answers by state and
-   question would skip most model calls.
+5. **Cache answers.** Done: see [Answer cache](#answer-cache). More than 99.9% of answers in all
+   three games now come from the cache, so a decision usually takes under a millisecond.
 6. **Faster runtimes.** [laya-mlx](https://github.com/mizorewww/laya-mlx) runs Laya natively on Apple
    Silicon and is reported to be much faster in its Tetris demo (up to 50 times, in under 1 GB of
    memory); [@receptron/laya](https://github.com/receptron/laya) runs it with ONNX Runtime from
    Node.js. Either could replace the PyTorch server behind the same endpoint.
 7. **Count the model's delay in descriptions.** Frogger and Space Invaders already account for the
-   input limit. They don't yet add the model's own 60–120 ms, which matters most once Frogger's
-   traffic speeds up on level 3.
+   input limit. They don't yet add the model's own 60–120 ms on a new sentence, which matters most
+   once Frogger's traffic speeds up on level 3.
 
 ### Better measurement
 
-8. **A repeatable benchmark.** The numbers above are single runs. A script that plays many seeds
-   per game and reports the mean and spread for Laya, the oracle and random answers would make
-   improvements measurable.
+8. **A repeatable benchmark.** Apart from Tetris, the numbers above are single runs. A script that
+   plays many seeds per game and reports the mean and spread for Laya, the oracle and random answers
+   would make improvements measurable.
 9. **Realtime accuracy checks.** `eval_questions.py` checks answers in lockstep. Checking them in
    realtime would show how often an answer is right when asked but wrong by the time it's used.

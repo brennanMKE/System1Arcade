@@ -16,6 +16,10 @@ Policies:
     --policy oracle     the game's own correct answers: the best these questions can do
     --policy random     random answers: the floor
 
+With --policy laya, answers are cached by (state, question) because Laya
+answers the same prompt the same way; --cache-size 0 or SYSTEM1_LAYA_CACHE=0
+turns that off. A Laya server behind --policy sidecar keeps its own cache.
+
 Clock:
     --lockstep          the game waits for each decision (latency is free)
     default realtime    the game keeps running while the model thinks
@@ -72,27 +76,32 @@ def random_answers(req):
 
 
 def make_policy(args, api):
+    """Returns (policy, cache); cache is None unless answers are cached here."""
     if args.policy == "random":
-        return random_answers
+        return random_answers, None
     if args.policy == "oracle":
-        return lambda req: http("GET", f"{api}/oracle")["answers"]
+        return lambda req: http("GET", f"{api}/oracle")["answers"], None
     if args.policy == "sidecar":
         def sidecar(req):
             if "batch" in req:
                 return flatten({k: answers_from(http("POST", args.sidecar, p)) for k, p in req["batch"].items()})
             return answers_from(http("POST", args.sidecar, req))
-        return sidecar
+        return sidecar, None
 
     import laya  # pip install laya
-    from laya_batch import predict_many
+    from laya_batch import AnswerCache, answer_cached, cache_size_from_env, predict_many
 
     model = laya.load(args.model, device=args.device)
+    cache = AnswerCache(cache_size_from_env() if args.cache_size is None else args.cache_size)
+
+    def single(prompts):
+        return {k: answers_from(model.predict(p["state"], p["questions"])) for k, p in prompts.items()}
 
     def local(req):
         if "batch" in req:
-            return flatten(predict_many(model, req["batch"]))
-        return answers_from(model.predict(req["state"], req["questions"]))
-    return local
+            return flatten(answer_cached(req["batch"], lambda ps: predict_many(model, ps), cache))
+        return answer_cached({"": req}, single, cache)[""]
+    return local, (cache if cache.size > 0 else None)
 
 
 def main():
@@ -103,6 +112,7 @@ def main():
     p.add_argument("--policy", choices=["laya", "sidecar", "oracle", "random"], default="laya")
     p.add_argument("--model", default="convaiinnovations/laya", help="Laya checkpoint for --policy laya")
     p.add_argument("--device", help="torch device for --policy laya: mps, cuda or cpu (default: auto)")
+    p.add_argument("--cache-size", type=int, help="answers to cache for --policy laya, 0 = off (default: $SYSTEM1_LAYA_CACHE or 10000)")
     p.add_argument("--sidecar", default="http://127.0.0.1:8000/predict", help="predict URL for --policy sidecar")
     p.add_argument("--lockstep", action="store_true", help="pause the game between decisions")
     p.add_argument("--games", type=int, default=1, help="stop after this many games end (0 = keep playing)")
@@ -113,7 +123,7 @@ def main():
     args = p.parse_args()
 
     api = args.api.rstrip("/")
-    pick = make_policy(args, api)
+    pick, cache = make_policy(args, api)
 
     if args.game:
         http("POST", f"{api}/load", {"game": args.game, "seed": args.seed})
@@ -132,6 +142,8 @@ def main():
                 avg = total_ms / max(decisions, 1)
                 how = "capped" if capped and not st["over"] else "over"
                 print(f"game {finished} {how}: score {st['score']} after {decisions} decisions, {avg:.0f}ms avg decision")
+                if cache:
+                    print(f"  {cache.summary()}")
                 if args.games and finished >= args.games:
                     break
                 time.sleep(args.pause_after_game)
@@ -157,6 +169,8 @@ def main():
         pass
     except urllib.error.URLError as e:
         sys.exit(f"cannot reach {api}: {e} (is System 1 Arcade or cmd/headless running?)")
+    if cache and not scores:
+        print(cache.summary())  # interrupted before a game ended
     if len(scores) > 1:
         print(f"mean score {sum(scores) / len(scores):.1f} over {len(scores)} games")
 
