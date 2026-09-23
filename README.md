@@ -105,8 +105,12 @@ Open **Settings** from the side panel or the start screen to choose the agent.
 
 ### Built-in agent
 
-The app runs Laya locally as `agents/laya_server.py`, using the project's `.venv` Python. The app
-finds the project folder from its own location; set `SYSTEM1_ROOT` if it can't.
+The app runs Laya locally. The agent scripts are built into the app, so it works wherever the app is
+installed. It uses the project's `.venv` when the app runs from the project folder. Otherwise, on first
+start, it creates its own Python environment in the app's support folder (`~/Library/Application
+Support/System 1 Arcade/agent` on macOS) and installs Laya there, showing progress while the game waits.
+This needs Python 3.10 or newer, which the app looks for in the usual install locations. Set
+`SYSTEM1_PYTHON` to choose an interpreter that already has Laya.
 
 ### Custom agent
 
@@ -211,6 +215,6 @@ go test ./internal/...   # includes an oracle-ceiling test for every game
 - Frogger's safety window doesn't yet account for decision latency, which costs lives once traffic
   speeds up on level 3.
 - Space Invaders loses lives that perfect answers avoid; the oracle reaches waves 7–10.
-- The built-in agent runs from the project folder and its `.venv`, so a copied `.app` needs a custom
-  agent or `SYSTEM1_ROOT`.
+- The built-in agent's first start away from the project folder downloads Laya and PyTorch (about
+  1 GB) and needs Python 3.10 or newer.
 - The build scripts are tested on macOS; the Linux and Windows paths haven't been run yet.
