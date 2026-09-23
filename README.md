@@ -16,6 +16,18 @@ Built with Go and [Wails](https://wails.io), so it runs on macOS, Windows and Li
 In each screenshot, Laya is the player. The side panel shows its latest decision, its answer to each
 question, and the plain-English description it was given ("Model sees").
 
+## Documentation
+
+- [System 1 models and how they drive the games](docs/system-1-models.md): what a System 1 model
+  is, and how the app turns its answers into joystick input
+- Per game, the rules and exactly what is sent to the model: [Tetris](docs/games/tetris.md),
+  [Frogger](docs/games/frogger.md), [Space Invaders](docs/games/space-invaders.md)
+- [Laya performance and how to improve it](docs/laya-performance.md): measured speed, accuracy
+  and scores, and what to try next
+- [Connecting a custom agent](docs/custom-agents.md): the endpoint contract, Settings, and
+  connecting a standalone Laya server or TypeSafe's Jev
+- [Screenshots](docs/screenshots.md): capturing the app window from scripts
+
 ## Quick start
 
 You need Go and Node.js; for the built-in agent, also Python 3. On Linux you need the GTK 3 and
@@ -131,8 +143,11 @@ POST <url>
 - When a decision has several states, the app sends `{"batch": {key: {state, questions}}}` and
   expects answers keyed `"key.question"`. Turn off **Send several short states in one request** for
   endpoints that only take single states, and the app sends one request per state instead.
-- An optional API key is sent as a Bearer token. **Test connection** checks the endpoint before
-  you save.
+- An optional API key is sent as a Bearer token, and an optional model name as `"model"` (TypeSafe's
+  Jev API needs `jev-latest`). **Test connection** checks the endpoint before you save.
+
+See [Connecting a custom agent](docs/custom-agents.md) for the full contract, the questions each game
+asks, and setting up Jev or a standalone Laya server.
 
 [`agents/custom_agent_example.py`](agents/custom_agent_example.py) is a standard-library starting
 point: replace its `decide()` with your model.

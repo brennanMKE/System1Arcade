@@ -91,3 +91,23 @@ func TestErrorsAreReported(t *testing.T) {
 		t.Fatal("a response without answers should be an error")
 	}
 }
+
+func TestModelIsSent(t *testing.T) {
+	var got string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Model string `json:"model"`
+		}
+		json.NewDecoder(r.Body).Decode(&body)
+		got = body.Model
+		w.Write([]byte(`{"answers": {"light": {"type": "choice", "choice": "green", "probabilities": {"green": 1}}}}`))
+	}))
+	defer srv.Close()
+	c := &Client{URL: srv.URL, Model: "jev-latest"}
+	if _, _, err := c.Test(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got != "jev-latest" {
+		t.Fatalf("model = %q, want jev-latest", got)
+	}
+}

@@ -31,6 +31,9 @@ import (
 type Client struct {
 	URL    string
 	APIKey string
+	// Model, when set, is sent as "model" in every request, as TypeSafe's
+	// /v1/systemone API requires (e.g. "jev-latest").
+	Model string
 	// Batch sends a whole batch in one request. When false, each state in a
 	// batch is its own request, sent concurrently.
 	Batch bool
@@ -73,7 +76,10 @@ func (c *Client) Ask(ctx context.Context, prompt map[string]any) (game.Answers, 
 	return out, nil
 }
 
-func (c *Client) post(ctx context.Context, body any) (game.Answers, error) {
+func (c *Client) post(ctx context.Context, body map[string]any) (game.Answers, error) {
+	if c.Model != "" {
+		body["model"] = c.Model
+	}
 	b, err := json.Marshal(body)
 	if err != nil {
 		return nil, err

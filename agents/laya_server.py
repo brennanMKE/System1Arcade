@@ -20,6 +20,7 @@ sys.path.insert(0, __file__.rsplit("/", 1)[0])
 
 def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--host", default="127.0.0.1", help="address to listen on (0.0.0.0 to serve other machines)")
     p.add_argument("--port", type=int, default=0, help="port to listen on (0 = any free port)")
     p.add_argument("--model", default="convaiinnovations/laya")
     p.add_argument("--device", help="mps, cuda or cpu (default: auto)")
@@ -61,8 +62,8 @@ def main():
         def log_message(self, *a):
             pass
 
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), Handler)
-    print(f"agent ready http://127.0.0.1:{server.server_port}/predict", flush=True)
+    server = ThreadingHTTPServer((args.host, args.port), Handler)
+    print(f"agent ready http://{args.host}:{server.server_port}/predict", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

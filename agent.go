@@ -28,6 +28,9 @@ type Settings struct {
 	URL string `json:"url"`
 	// APIKey is sent as a Bearer token to a custom endpoint, if set.
 	APIKey string `json:"apiKey"`
+	// Model is sent as "model" to a custom endpoint, if set; TypeSafe's Jev
+	// API requires it (e.g. "jev-latest").
+	Model string `json:"model"`
 	// Batch sends several short states in one request; off sends one request
 	// per state, which plain Laya/Jev predict endpoints accept.
 	Batch bool `json:"batch"`
@@ -113,7 +116,7 @@ func (m *agentManager) start(parent context.Context, e *engine.Engine, s Setting
 		}
 	}
 	go func() {
-		client := &agent.Client{URL: s.URL, APIKey: s.APIKey, Batch: s.Batch}
+		client := &agent.Client{URL: s.URL, APIKey: s.APIKey, Model: s.Model, Batch: s.Batch}
 		if s.Agent != "custom" {
 			url, err := m.launchServer(ctx, set)
 			if err != nil {

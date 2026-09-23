@@ -81,6 +81,7 @@
       <fieldset id="custom-fields">
         <label>Endpoint URL<input id="set-url" type="url" placeholder="http://127.0.0.1:8000/predict" spellcheck="false"></label>
         <label>API key (optional, sent as a Bearer token)<input id="set-key" type="password" autocomplete="off"></label>
+        <label>Model (optional, sent as <code>"model"</code>; e.g. <code>jev-latest</code> for TypeSafe Jev)<input id="set-model" type="text" spellcheck="false" autocomplete="off"></label>
         <label class="check"><input id="set-batch" type="checkbox"> Send several short states in one request (<code>batch</code>)</label>
         <p class="hint">Turn batching off for plain Laya or Jev <code>/predict</code> endpoints: each state is then its own request.</p>
         <details>

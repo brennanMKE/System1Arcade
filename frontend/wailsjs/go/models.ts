@@ -85,6 +85,7 @@ export namespace main {
 	    agent: string;
 	    url: string;
 	    apiKey: string;
+	    model: string;
 	    batch: boolean;
 	    inputRate: number;
 	
@@ -97,6 +98,7 @@ export namespace main {
 	        this.agent = source["agent"];
 	        this.url = source["url"];
 	        this.apiKey = source["apiKey"];
+	        this.model = source["model"];
 	        this.batch = source["batch"];
 	        this.inputRate = source["inputRate"];
 	    }

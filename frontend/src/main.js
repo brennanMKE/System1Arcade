@@ -132,6 +132,7 @@ function openSettings() {
   f.agent.value = settings.agent || 'builtin';
   $('set-url').value = settings.url || '';
   $('set-key').value = settings.apiKey || '';
+  $('set-model').value = settings.model || '';
   $('set-batch').checked = !!settings.batch;
   $('set-rate').value = String(settings.inputRate ?? 6);
   $('settings-msg').textContent = '';
@@ -141,7 +142,7 @@ function openSettings() {
 function closeSettings() { $('settings').hidden = true; }
 function syncSettingsForm() { $('custom-fields').disabled = $('settings-form').agent.value !== 'custom'; }
 function readSettingsForm() {
-  return {agent: $('settings-form').agent.value, url: $('set-url').value.trim(), apiKey: $('set-key').value, batch: $('set-batch').checked, inputRate: Number($('set-rate').value)};
+  return {agent: $('settings-form').agent.value, url: $('set-url').value.trim(), apiKey: $('set-key').value, model: $('set-model').value.trim(), batch: $('set-batch').checked, inputRate: Number($('set-rate').value)};
 }
 function settingsMsg(text, cls) {
   const el = $('settings-msg');

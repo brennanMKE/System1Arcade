@@ -127,7 +127,7 @@ func (a *App) TestAgent(s Settings) (string, error) {
 	if s.Agent != "custom" {
 		return "The built-in agent starts when you press Start.", nil
 	}
-	c := &agent.Client{URL: s.URL, APIKey: s.APIKey, Batch: s.Batch}
+	c := &agent.Client{URL: s.URL, APIKey: s.APIKey, Model: s.Model, Batch: s.Batch}
 	ctx, cancel := context.WithTimeout(a.ctx, 15*time.Second)
 	defer cancel()
 	msg, d, err := c.Test(ctx)
