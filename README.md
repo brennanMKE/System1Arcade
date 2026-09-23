@@ -10,22 +10,31 @@ Built with Go and [Wails](https://wails.io), so it runs on macOS, Windows and Li
 
 | Tetris | Frogger | Space Invaders |
 |---|---|---|
-| ![Laya playing Tetris: 82 lines, level 8](docs/images/tetris.png) | ![Laya playing Frogger on level 3](docs/images/frogger.png) | ![Laya clearing wave 1 of Space Invaders](docs/images/invaders.png) |
-| Lockstep: 442 lines, level 44 | Realtime: cleared levels 1 and 2 without losing a life | Realtime: cleared wave 1 |
+| ![Laya playing Tetris in lockstep: 83 lines, level 8](docs/images/tetris.png) | ![Laya playing Frogger on level 2, lining up with an open home](docs/images/frogger.png) | ![Laya playing Space Invaders: 18 invaders left on wave 1](docs/images/invaders.png) |
+| Lockstep, 83 lines in. Best run: 442 lines, level 44 | Realtime, level 2. Best run: 13 homes, reaching level 3 | Realtime, 18 invaders left. Best run: cleared wave 1 |
 
 In each screenshot, Laya is the player. The side panel shows its latest decision, its answer to each
 question, and the plain-English description it was given ("Model sees").
 
 ## Quick start
 
-You need Go, Node.js, the Wails CLI and, for the built-in agent, Python 3.
+You need Go and Node.js; for the built-in agent, also Python 3. On Linux you need the GTK 3 and
+WebKitGTK development packages (e.g. `libgtk-3-dev libwebkit2gtk-4.1-dev`).
 
 ```sh
-go install github.com/wailsapp/wails/v2/cmd/wails@latest
-python3 -m venv .venv && .venv/bin/pip install laya   # built-in agent; downloads the model on first use
-wails build                                          # → build/bin/System 1 Arcade.app
-open "build/bin/System 1 Arcade.app"                 # or: wails dev
+scripts/build.sh --agent        # macOS or Linux (--agent also sets up .venv with Laya)
+open "build/bin/System 1 Arcade.app"
 ```
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\build.ps1 -Agent   # Windows
+build\bin\System1.exe
+```
+
+The build scripts install the Wails CLI version pinned in `go.mod` if it's missing, check the
+platform's prerequisites, and build for the current platform. Options: `--clean`, `--debug`,
+`--test` (`-Clean`, `-DebugBuild`, `-Test` on Windows). The Laya model downloads the first time the
+agent runs. For live reloading while developing, use `wails dev`.
 
 The app opens paused on a start screen. Pick a game, choose who plays (**You** or **Agent**) and
 press **Start**. With the agent selected, the game stays paused until the agent's first answer,
@@ -186,6 +195,7 @@ terminal:
 | `app.go`, `agent.go`, `main.go`, `frontend/` | the Wails desktop app: canvas renderer, start screen, settings, agent panel |
 | `cmd/headless` | the engine and API without a window |
 | `agents/` | built-in Laya server, terminal agent, custom agent example, batching helper, accuracy tool |
+| `scripts/` | `build.sh` and `build.ps1` for the current platform; `screenshot.sh` for window captures |
 
 To add a game, implement `game.Game` (and `game.Advisor` for agents) and register it in
 `internal/games/registry.go`.
@@ -203,4 +213,4 @@ go test ./internal/...   # includes an oracle-ceiling test for every game
 - Space Invaders loses lives that perfect answers avoid; the oracle reaches waves 7–10.
 - The built-in agent runs from the project folder and its `.venv`, so a copied `.app` needs a custom
   agent or `SYSTEM1_ROOT`.
-- Windows and Linux builds haven't been tested yet.
+- The build scripts are tested on macOS; the Linux and Windows paths haven't been run yet.

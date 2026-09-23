@@ -152,8 +152,7 @@ func (e *Engine) resetLocked(seed int64) {
 	}
 	e.seed = seed
 	e.g.Reset(seed)
-	e.tick = 0
-	e.paused = false
+	e.tick = 0 // pause state is kept: a reset on the start screen must not start play
 	clear(e.agentHold)
 	clear(e.agentPress)
 	clear(e.prevHeld)
