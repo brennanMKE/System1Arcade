@@ -81,3 +81,11 @@ func Truth(b bool) Answer {
 func Pick(choice string) Answer {
 	return Answer{Type: "choice", Choice: choice, Probabilities: map[string]float64{choice: 1}}
 }
+
+// Paced is implemented by games whose descriptions depend on how quickly
+// the agent can act. Before describing the situation, the engine reports
+// the ticks until the agent's next press (delay) and the minimum ticks
+// between presses (gap); both are 0 at full speed.
+type Paced interface {
+	SetInputTiming(delay, gap int)
+}

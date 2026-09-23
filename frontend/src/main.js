@@ -133,6 +133,7 @@ function openSettings() {
   $('set-url').value = settings.url || '';
   $('set-key').value = settings.apiKey || '';
   $('set-batch').checked = !!settings.batch;
+  $('set-rate').value = String(settings.inputRate ?? 6);
   $('settings-msg').textContent = '';
   syncSettingsForm();
   $('settings').hidden = false;
@@ -140,7 +141,7 @@ function openSettings() {
 function closeSettings() { $('settings').hidden = true; }
 function syncSettingsForm() { $('custom-fields').disabled = $('settings-form').agent.value !== 'custom'; }
 function readSettingsForm() {
-  return {agent: $('settings-form').agent.value, url: $('set-url').value.trim(), apiKey: $('set-key').value, batch: $('set-batch').checked};
+  return {agent: $('settings-form').agent.value, url: $('set-url').value.trim(), apiKey: $('set-key').value, batch: $('set-batch').checked, inputRate: Number($('set-rate').value)};
 }
 function settingsMsg(text, cls) {
   const el = $('settings-msg');
@@ -175,7 +176,7 @@ function showAgent(st) {
   const msg = {
     off: `Off. ${kindName()} is ready to start; the game is under keyboard control.`,
     starting: `${st.detail || 'Starting…'} The game is paused until the agent answers.`,
-    running: `${who} is playing the game on screen.`,
+    running: `${who} is playing the game on screen, ${settings.inputRate ? `at up to ${settings.inputRate} inputs per second` : 'at full speed'}.`,
     error: `Agent problem: ${st.detail}`,
   }[st.state] || st.state;
   const el = $('agent-status');

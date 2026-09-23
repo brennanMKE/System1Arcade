@@ -94,6 +94,8 @@ type Frogger struct {
 	level  int
 	over   bool
 	facing game.Button
+	delay  int // ticks until the agent's next press can happen
+	gap    int // minimum ticks between the agent's presses
 }
 
 func New() *Frogger { f := &Frogger{}; f.Reset(1); return f }

@@ -17,6 +17,7 @@ import (
 
 	"system1/internal/agent"
 	"system1/internal/engine"
+	"system1/internal/game"
 )
 
 // Settings choose which agent plays when the user asks for one.
@@ -30,10 +31,24 @@ type Settings struct {
 	// Batch sends several short states in one request; off sends one request
 	// per state, which plain Laya/Jev predict endpoints accept.
 	Batch bool `json:"batch"`
+	// InputRate caps the agent's new inputs per second, so it plays at a
+	// watchable, human-like pace. 0 means full speed.
+	InputRate int `json:"inputRate"`
+}
+
+// InputRates are the speeds offered in Settings (0 = full speed).
+var InputRates = []int{0, 10, 8, 6, 4, 3, 2}
+
+// paceTicks converts inputs per second to the engine's minimum gap in ticks.
+func paceTicks(rate int) int {
+	if rate <= 0 {
+		return 0
+	}
+	return (game.TickRate + rate/2) / rate
 }
 
 func defaultSettings() Settings {
-	return Settings{Agent: "builtin", URL: "http://127.0.0.1:8000/predict", Batch: true}
+	return Settings{Agent: "builtin", URL: "http://127.0.0.1:8000/predict", Batch: true, InputRate: 6}
 }
 
 func settingsPath() string { return filepath.Join(supportDir(), "settings.json") }

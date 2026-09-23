@@ -36,6 +36,7 @@ func NewApp() *App {
 func (a *App) startup(ctx context.Context) {
 	a.ctx = ctx
 	a.engine.SetPaused(true) // the launch screen decides how play starts
+	a.engine.SetAgentPace(paceTicks(a.settings.InputRate))
 	go a.engine.Run(ctx)
 
 	updates, _ := a.engine.Subscribe()
@@ -117,6 +118,7 @@ func (a *App) SaveSettings(s Settings) error {
 		s.Agent = "builtin"
 	}
 	a.settings = s
+	a.engine.SetAgentPace(paceTicks(s.InputRate))
 	return saveSettings(s)
 }
 

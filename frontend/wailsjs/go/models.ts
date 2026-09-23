@@ -86,6 +86,7 @@ export namespace main {
 	    url: string;
 	    apiKey: string;
 	    batch: boolean;
+	    inputRate: number;
 	
 	    static createFrom(source: any = {}) {
 	        return new Settings(source);
@@ -97,6 +98,7 @@ export namespace main {
 	        this.url = source["url"];
 	        this.apiKey = source["apiKey"];
 	        this.batch = source["batch"];
+	        this.inputRate = source["inputRate"];
 	    }
 	}
 	export class Setup {

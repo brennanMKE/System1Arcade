@@ -88,6 +88,8 @@ type Invaders struct {
 	level int
 	over  bool
 	ticks int
+	delay int // ticks until the agent's next press can happen
+	gap   int // minimum ticks between the agent's presses
 }
 
 func New() *Invaders { g := &Invaders{}; g.Reset(1); return g }

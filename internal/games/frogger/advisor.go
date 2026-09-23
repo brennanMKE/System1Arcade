@@ -40,14 +40,34 @@ type outcome struct {
 	desc string
 }
 
+// SetInputTiming tells the frog when a decided hop happens (delay) and how
+// long it then stays before it can hop again (gap), at a human-like pace.
+func (f *Frogger) SetInputTiming(delay, gap int) { f.delay, f.gap = delay, gap }
+
+// window is how long a square must stay safe after the frog lands there:
+// until it can hop again, plus a margin for the model's reaction time.
+func (f *Frogger) window() int { return max(safeWindow, f.gap+safeWindow-hopCooldown) }
+
 func secs(t int) string { return fmt.Sprintf("%.1f seconds", float64(t)/game.TickRate) }
 
-func (f *Frogger) outcomeAt(row int, fx float64) outcome {
+// outcomeAt describes landing at (row, fx). A hop lands f.delay ticks from
+// now; staying put happens now.
+func (f *Frogger) outcomeAt(row int, fx float64, hop bool) outcome {
 	if row < 0 {
 		return outcome{false, "nothing; it is off the board"}
 	}
+	// At a human-like pace a hop can wait a few ticks, and a frog on the
+	// river drifts with its log until then.
+	drift, delay := 0.0, 0
+	if hop {
+		delay = f.delay
+	}
+	if cur := f.lanes[f.frow]; cur != nil && cur.spec.kind == river {
+		drift = cur.speed
+	}
 	if row == 0 {
-		c := int(math.Floor((fx + cell/2) / cell))
+		x := fx + drift*float64(delay)
+		c := int(math.Floor((x + cell/2) / cell))
 		for i, hc := range homeCols {
 			if hc == c {
 				if f.homes[i] {
@@ -65,28 +85,37 @@ func (f *Frogger) outcomeAt(row int, fx float64) outcome {
 	switch l.spec.kind {
 	case road:
 		name := map[byte]string{'C': "a car", 'K': "a truck"}[l.spec.char]
-		for t := 0; t <= safeWindow; t++ {
-			if l.coversAt(fx+6, fx+cell-6, t) {
-				if t == 0 {
-					return outcome{false, fmt.Sprintf("a square with %s on it right now, so the frog would be hit", name)}
+		hit := -1
+		for d := delay; d <= delay; d++ {
+			x := fx + drift*float64(d)
+			for t := d; t <= d+f.window(); t++ {
+				if l.coversAt(x+6, x+cell-6, t) && (hit < 0 || t < hit) {
+					hit = t
 				}
-				return outcome{false, fmt.Sprintf("a square %s will drive through in %s, so the frog would be hit", name, secs(t))}
 			}
+		}
+		switch {
+		case hit == 0:
+			return outcome{false, fmt.Sprintf("a square with %s on it right now, so the frog would be hit", name)}
+		case hit > 0:
+			return outcome{false, fmt.Sprintf("a square %s will drive through in %s, so the frog would be hit", name, secs(hit))}
 		}
 		return outcome{true, "clear road with no traffic coming, which is safe"}
 	default:
 		ride := map[byte]string{'L': "a log", 'T': "turtles"}[l.spec.char]
-		for t := 0; t <= safeWindow; t++ {
-			x := fx + l.speed*float64(t)
-			c := x + cell/2
-			if x < -cell/2 || x > float64(width-cell/2) {
-				return outcome{false, fmt.Sprintf("%s that carries the frog off the screen in %s, so the frog would die", ride, secs(t))}
-			}
-			if !l.coversAt(c-2, c+2, t) {
-				if t == 0 {
-					return outcome{false, "open water, so the frog would drown"}
+		for d := delay; d <= delay; d++ {
+			for t := d; t <= d+f.window(); t++ {
+				x := fx + drift*float64(d) + l.speed*float64(t-d)
+				c := x + cell/2
+				if x < -cell/2 || x > float64(width-cell/2) {
+					return outcome{false, fmt.Sprintf("%s that carries the frog off the screen in %s, so the frog would die", ride, secs(t))}
 				}
-				return outcome{false, fmt.Sprintf("the end of %s, which drifts away in %s and the frog would drown", ride, secs(t))}
+				if !l.coversAt(c-2, c+2, t) {
+					if t == 0 {
+						return outcome{false, "open water, so the frog would drown"}
+					}
+					return outcome{false, fmt.Sprintf("the end of %s, which drifts away in %s and the frog would drown", ride, secs(t))}
+				}
 			}
 		}
 		return outcome{true, fmt.Sprintf("%s the frog can ride safely", ride)}
@@ -96,23 +125,23 @@ func (f *Frogger) outcomeAt(row int, fx float64) outcome {
 // options describes each move: where the frog would land.
 func (f *Frogger) options() map[string]outcome {
 	o := map[string]outcome{
-		"up":   f.outcomeAt(f.frow-1, f.fx),
-		"stay": f.outcomeAt(f.frow, f.fx),
+		"up":   f.outcomeAt(f.frow-1, f.fx, true),
+		"stay": f.outcomeAt(f.frow, f.fx, false),
 	}
 	if f.frow < rows-1 {
-		o["down"] = f.outcomeAt(f.frow+1, f.fx)
+		o["down"] = f.outcomeAt(f.frow+1, f.fx, true)
 	} else {
 		o["down"] = outcome{false, "the bottom edge, where the frog cannot go"}
 	}
 	if f.fx-cell < 0 {
 		o["left"] = outcome{false, "the left edge, where the frog cannot go"}
 	} else {
-		o["left"] = f.outcomeAt(f.frow, f.fx-cell)
+		o["left"] = f.outcomeAt(f.frow, f.fx-cell, true)
 	}
 	if f.fx+cell > float64(width-cell) {
 		o["right"] = outcome{false, "the right edge, where the frog cannot go"}
 	} else {
-		o["right"] = f.outcomeAt(f.frow, f.fx+cell)
+		o["right"] = f.outcomeAt(f.frow, f.fx+cell, true)
 	}
 	return o
 }

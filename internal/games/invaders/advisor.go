@@ -13,6 +13,14 @@ const dangerTicks = 50
 
 func (g *Invaders) muzzle() int { return int(g.px) + 6 }
 
+// SetInputTiming tells the cannon how long until it can act (delay) and how
+// often it can act (gap), at a human-like pace.
+func (g *Invaders) SetInputTiming(delay, gap int) { g.delay, g.gap = delay, gap }
+
+// danger is how early a bomb counts as "about to hit": early enough to slide
+// clear after the next input is allowed.
+func (g *Invaders) danger() int { return dangerTicks + g.delay }
+
 // shieldAbove reports whether an intact shield pixel sits in column x
 // between y0 and the cannon.
 func (g *Invaders) shieldAbove(x int, y0 float64) bool {
@@ -50,7 +58,7 @@ func (g *Invaders) moveSafe(dir string) bool {
 		return false
 	}
 	b, t := g.incomingAt(px)
-	return b == nil || t > dangerTicks
+	return b == nil || t > g.danger()
 }
 
 // incomingAt is incoming for a cannon at px.
@@ -174,7 +182,7 @@ func (g *Invaders) facts() map[string]string {
 		"threat": "No bomb is falling toward the cannon.",
 		"escape": "There is open space on both sides of the cannon.",
 	}
-	if b, t := g.incoming(); b != nil && t <= dangerTicks {
+	if b, t := g.incoming(); b != nil && t <= g.danger() {
 		f["threat"] = fmt.Sprintf("A bomb is falling straight at the cannon and will hit it in %.1f seconds.", float64(t)/game.TickRate)
 		f["escape"] = fmt.Sprintf("The open space away from the falling bomb is to the %s of the cannon.", g.escapeSide(b))
 	}
@@ -277,7 +285,7 @@ func (g *Invaders) Decide(a game.Answers) game.Decision {
 func (g *Invaders) Oracle() game.Answers {
 	a := game.Answers{"escape.a": game.Pick("left"), "aim.a": game.Pick("here")}
 	b, t := g.incoming()
-	a["threat.a"] = game.Truth(b != nil && t <= dangerTicks)
+	a["threat.a"] = game.Truth(b != nil && t <= g.danger())
 	if b != nil {
 		a["escape.a"] = game.Pick(g.escapeSide(b))
 	}

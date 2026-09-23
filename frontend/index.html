@@ -98,6 +98,18 @@ Batch (Tetris sends one short state per landing spot):
           <p class="hint">Agents that drive the game themselves can use the app's API instead: <code id="settings-api"></code></p>
         </details>
       </fieldset>
+      <label>Agent input speed
+        <select id="set-rate">
+          <option value="0">Full speed (as fast as the game allows)</option>
+          <option value="10">10 inputs per second</option>
+          <option value="8">8 inputs per second</option>
+          <option value="6">6 inputs per second (human-like)</option>
+          <option value="4">4 inputs per second</option>
+          <option value="3">3 inputs per second</option>
+          <option value="2">2 inputs per second (easy to follow)</option>
+        </select>
+      </label>
+      <p class="hint">Caps how often the agent can press a new input, so it plays at a pace you can watch. Applies to both agents; your keyboard is never limited.</p>
       <p id="settings-msg" class="hint"></p>
       <div class="actions">
         <button type="button" id="settings-test">Test connection</button>

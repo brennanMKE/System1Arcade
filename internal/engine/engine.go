@@ -84,6 +84,9 @@ type Engine struct {
 	agentPress map[game.Button]bool
 	prevHeld   map[game.Button]bool
 	macro      []string // queued actions from Decide, one per tick
+	paceGap    int      // minimum ticks between the agent's presses (0 = no limit)
+	sincePress int      // ticks since the agent's last press
+	lastHold   int      // normal hold length of the agent's last press
 
 	last      *agentEvent
 	total     int
@@ -157,6 +160,7 @@ func (e *Engine) resetLocked(seed int64) {
 	clear(e.agentPress)
 	clear(e.prevHeld)
 	e.macro = nil
+	e.sincePress = e.paceGap
 	e.dirty = true
 }
 
@@ -256,6 +260,7 @@ func (e *Engine) Decide(ans game.Answers, meta map[string]any) (game.Decision, S
 		e.mu.Unlock()
 		return game.Decision{}, State{}, ErrNoAdvisor
 	}
+	e.reportDelayLocked()
 	d := adv.Decide(ans)
 	if d.Keep && (len(e.macro) > 0 || len(e.agentHold) > 0) {
 		e.mu.Unlock()
@@ -265,13 +270,18 @@ func (e *Engine) Decide(ans game.Answers, meta map[string]any) (game.Decision, S
 		meta = map[string]any{}
 	}
 	meta["answers"] = ans
-	e.macro = nil
-	clear(e.agentHold) // let go of the previous input, as a player would
+	var plan []string
 	for _, a := range d.Actions {
 		if a != "" && a != game.Noop.Name && e.hasAction(a) {
-			e.macro = append(e.macro, a)
+			plan = append(plan, a)
 		}
 	}
+	if len(plan) == 1 && e.holding(plan[0]) {
+		plan = nil // keep holding the same way rather than let go and press again
+	} else {
+		clear(e.agentHold) // let go of the previous input, as a player would
+	}
+	e.macro = plan
 	e.countDecision(strings.Join(d.Actions, " "), d.Note, meta)
 	if e.mode != Lockstep {
 		e.pumpMacroLocked() // start on the very next tick
@@ -279,7 +289,13 @@ func (e *Engine) Decide(ans game.Answers, meta map[string]any) (game.Decision, S
 		return d, State{}, nil
 	}
 	e.pumpMacroLocked()
-	for i := 0; i < 600 && (len(e.macro) > 0 || len(e.agentHold) > 0) && !e.g.Status().Over; i++ {
+	// Advance until the plan's presses are done and the last one has run
+	// its normal length; a longer, paced hold carries on into the next
+	// decision, which can release it.
+	for i := 0; i < 600 && !e.g.Status().Over; i++ {
+		if len(e.macro) == 0 && (len(e.agentHold) == 0 || e.sincePress >= e.lastHold) {
+			break
+		}
 		e.tickLocked()
 	}
 	for i := 0; i < max(d.Wait, 1) && !e.g.Status().Over; i++ {
@@ -292,6 +308,29 @@ func (e *Engine) Decide(ans game.Answers, meta map[string]any) (game.Decision, S
 	return d, st, nil
 }
 
+// holding reports whether the agent is still holding every button of name.
+func (e *Engine) holding(name string) bool {
+	a := e.action(name)
+	if a == nil || len(a.Buttons) == 0 || a.HoldTicks <= 1 {
+		return false
+	}
+	for _, b := range a.Buttons {
+		if e.agentHold[b] == 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func (e *Engine) action(name string) *game.Action {
+	for i := range e.info.Actions {
+		if e.info.Actions[i].Name == name {
+			return &e.info.Actions[i]
+		}
+	}
+	return nil
+}
+
 func (e *Engine) hasAction(name string) bool {
 	for _, a := range e.info.Actions {
 		if a.Name == name {
@@ -301,14 +340,46 @@ func (e *Engine) hasAction(name string) bool {
 	return false
 }
 
+// HumanPace is the default minimum gap between an agent's presses: about
+// six inputs a second, a quick but believable joystick rate.
+const HumanPace = 10
+
+// SetAgentPace limits the agent's decisions to one new press every gap
+// ticks, so it plays at a human-like rate. 0 removes the limit. It applies
+// to actions from Decide; the low-level Act/Press/Step calls are not limited.
+func (e *Engine) SetAgentPace(gap int) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.paceGap = max(gap, 0)
+	e.sincePress = e.paceGap
+}
+
+// reportDelayLocked tells a Paced game how long until the agent can press.
+func (e *Engine) reportDelayLocked() {
+	if p, ok := e.g.(game.Paced); ok {
+		p.SetInputTiming(max(0, e.paceGap-e.sincePress), e.paceGap)
+	}
+}
+
 // pumpMacroLocked presses the next queued action once the previous one has
-// been released.
+// been released and the pace allows another press.
 func (e *Engine) pumpMacroLocked() {
-	if len(e.macro) == 0 || len(e.agentHold) > 0 {
+	if len(e.macro) == 0 || len(e.agentHold) > 0 || e.sincePress < e.paceGap {
 		return
 	}
-	e.actLocked(e.macro[0], 0, nil)
+	// A slower agent presses less often but holds a movement for longer,
+	// as a person would; taps (hold 1) stay taps.
+	hold := 0
+	if a := e.action(e.macro[0]); a != nil && a.HoldTicks > 1 {
+		hold = max(a.HoldTicks, e.paceGap)
+	}
+	e.actLocked(e.macro[0], hold, nil)
+	e.lastHold = 1
+	if a := e.action(e.macro[0]); a != nil {
+		e.lastHold = max(a.HoldTicks, 1)
+	}
 	e.macro = e.macro[1:]
+	e.sincePress = 0
 }
 
 func (e *Engine) actLocked(action string, holdTicks int, meta map[string]any) error {
@@ -410,6 +481,7 @@ func (e *Engine) tickLocked() {
 		}
 	}
 	clear(e.agentPress)
+	e.sincePress++
 	e.pumpMacroLocked()
 	e.dirty = true
 }
@@ -448,6 +520,7 @@ func (e *Engine) LayaRequest() map[string]any {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if adv, ok := e.g.(game.Advisor); ok {
+		e.reportDelayLocked()
 		p := adv.Prompt()
 		if p.Batch != nil {
 			return map[string]any{"batch": p.Batch}
@@ -475,6 +548,7 @@ func (e *Engine) Oracle() (game.Answers, bool) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if o, ok := e.g.(game.Oracle); ok {
+		e.reportDelayLocked()
 		return o.Oracle(), true
 	}
 	return nil, false
