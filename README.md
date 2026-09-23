@@ -1,3 +1,5 @@
+<p align="center"><img src="System1Arcade.png" alt="System 1 Arcade icon: a red arcade joystick" width="160"></p>
+
 # System 1 Arcade
 
 Tetris, Frogger and Space Invaders as a desktop app for experimenting with **System 1 decision
