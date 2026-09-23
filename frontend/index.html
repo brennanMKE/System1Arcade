@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+  <title>System 1 Arcade</title>
+</head>
+<body>
+<div id="app">
+  <aside id="panel">
+    <header>
+      <h1>System 1 <span>Arcade</span></h1>
+      <p class="sub">Playable by you. Drivable by an agent.</p>
+    </header>
+
+    <section>
+      <h2>Game</h2>
+      <div id="games" class="game-list"></div>
+      <p id="controls" class="hint"></p>
+    </section>
+
+    <section>
+      <h2>Clock</h2>
+      <div class="seg" id="mode">
+        <button data-mode="realtime">Realtime</button>
+        <button data-mode="lockstep">Lockstep</button>
+      </div>
+      <div class="row">
+        <button id="pause">Pause <kbd>P</kbd></button>
+        <button id="reset">Restart <kbd>R</kbd></button>
+      </div>
+      <p class="hint" id="mode-hint"></p>
+    </section>
+
+    <section id="agent">
+      <h2>Agent <span id="agent-dot" class="dot"></span><button id="open-settings" class="link">Settings</button></h2>
+      <button id="agent-toggle" class="agent-toggle">Start agent</button>
+      <p id="agent-status" class="hint"></p>
+      <div id="agent-body" class="hint">No agent decisions yet.</div>
+    </section>
+
+    <section id="sees" hidden>
+      <h2>Model sees</h2>
+      <p id="situation" class="situation"></p>
+    </section>
+
+    <section class="api">
+      <h2>Agent API</h2>
+      <code id="api-addr">…</code>
+      <p class="hint">GET <b>/v1/laya</b> → Laya → POST <b>/v1/decide</b></p>
+    </section>
+  </aside>
+
+  <main id="stage">
+    <canvas id="screen"></canvas>
+    <div id="banner" hidden></div>
+    <div id="hud"><span id="score"></span><span id="tick"></span></div>
+
+    <div id="launch" class="overlay">
+      <div class="card">
+        <h2 class="title">Game</h2>
+        <div id="launch-games" class="launch-games"></div>
+        <h2 class="title">Who plays</h2>
+        <div id="launch-who" class="seg launch-who">
+          <button data-who="you">You<small>keyboard</small></button>
+          <button data-who="agent">Agent<small id="launch-kind"></small></button>
+        </div>
+        <button id="launch-start" class="primary launch-start">Start <kbd>Enter</kbd></button>
+        <p class="hint center"><button id="launch-settings" class="link">Agent settings</button></p>
+      </div>
+    </div>
+  </main>
+
+  <div id="settings" class="overlay modal" hidden>
+    <form id="settings-form" class="card">
+      <h2 class="title">Agent settings</h2>
+      <label class="choice"><input type="radio" name="agent" value="builtin">
+        <span><b>Built-in agent</b><br>Laya, run locally by the app from the project's <code>.venv</code>.</span></label>
+      <label class="choice"><input type="radio" name="agent" value="custom">
+        <span><b>Custom agent</b><br>Your own service. The app POSTs each prompt to it and plays its answers.</span></label>
+      <fieldset id="custom-fields">
+        <label>Endpoint URL<input id="set-url" type="url" placeholder="http://127.0.0.1:8000/predict" spellcheck="false"></label>
+        <label>API key (optional, sent as a Bearer token)<input id="set-key" type="password" autocomplete="off"></label>
+        <label class="check"><input id="set-batch" type="checkbox"> Send several short states in one request (<code>batch</code>)</label>
+        <p class="hint">Turn batching off for plain Laya or Jev <code>/predict</code> endpoints: each state is then its own request.</p>
+        <details>
+          <summary>Endpoint contract</summary>
+<pre>POST &lt;url&gt;
+{"state": "A bomb is falling straight at the cannon…",
+ "questions": {"a": {"type": "noul",
+   "instructions": "Is a bomb about to hit the cannon?"}}}
+→ {"answers": {"a": {"type": "noul", "noul": 0.93}}}
+
+Batch (Tetris sends one short state per landing spot):
+{"batch": {"s1": {"state": …, "questions": …}, …}}
+→ {"answers": {"s1.look": {"type": "choice",
+     "choice": "clean", "probabilities": {…}}, …}}</pre>
+          <p class="hint">Agents that drive the game themselves can use the app's API instead: <code id="settings-api"></code></p>
+        </details>
+      </fieldset>
+      <p id="settings-msg" class="hint"></p>
+      <div class="actions">
+        <button type="button" id="settings-test">Test connection</button>
+        <span class="spacer"></span>
+        <button type="button" id="settings-cancel">Cancel</button>
+        <button type="submit" class="primary">Save</button>
+      </div>
+    </form>
+  </div>
+</div>
+<script src="./src/main.js" type="module"></script>
+</body>
+</html>

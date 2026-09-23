@@ -1,0 +1,25 @@
+# Normalize line endings
+* text=auto eol=lf
+
+# Windows-specific build files keep CRLF
+*.nsi text eol=crlf
+*.nsh text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary assets
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.icns binary
+*.woff binary
+*.woff2 binary
+*.ttf binary
+*.syso binary
+
+# Generated files: collapse in diffs
+go.sum linguist-generated=true
+frontend/package-lock.json linguist-generated=true -diff
+frontend/wailsjs/** linguist-generated=true

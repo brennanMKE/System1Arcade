@@ -1,0 +1,39 @@
+# Wails build output
+build/bin/
+
+# Frontend
+node_modules/
+frontend/dist/
+frontend/package.json.md5
+*.tsbuildinfo
+npm-debug.log*
+
+# Go
+*.test
+*.out
+coverage.*
+/System1
+/headless
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Editors / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
+Thumbs.db
+
+# Screenshots captured by scripts/screenshot.sh
+screenshots/
