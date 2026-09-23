@@ -37,6 +37,11 @@ For each spot the game measures the board as it would be afterwards:
 - **Bump:** how much rougher the surface gets, or how far the piece sticks up above the average
   column, whichever is worse.
 - **Lines:** rows the piece would complete.
+- **Fit:** whether the spot leaves the flattest surface of all the spots with the same holes and
+  lines. Spots that leave the same holes and lines otherwise read alike, so this is what separates
+  a good spot from a great one.
+- **Deep wells:** columns at least 3 rows lower than both neighbors (a wall counts as a tall
+  neighbor), compared with now.
 
 ### 2. Each spot becomes one sentence
 
@@ -46,15 +51,19 @@ A System 1 model can't count or compare numbers, so the game turns the measureme
 |---|---|
 | holes | no holes, one hole, two holes, three holes, many holes |
 | bump | no bump, a small bump, a big bump, a tall tower |
-| lines | (nothing), one line, two lines, three lines, four lines |
+| lines | (nothing), It clears one line … It clears four lines |
+| fit | It fits snugly, It fits loosely |
+| deep wells | (nothing), It leaves a deep well, It fills a deep well |
 
-> The piece leaves no holes under it and makes no bump on top.
+> The piece leaves no holes under it and makes no bump on top. It clears one line. It fits snugly.
 >
-> The piece leaves one hole under it and makes a tall tower on top.
+> The piece leaves one hole under it and makes a big bump on top. It fits loosely.
 >
-> The piece leaves no holes under it and makes a small bump on top. It completes one line.
+> The piece leaves no holes under it and makes a tall tower on top. It fits loosely. It leaves a
+> deep well.
 
-Spots that read the same share a sentence, so each distinct sentence is asked only once.
+Spots that read the same share a sentence, so each distinct sentence is asked only once. A piece
+has 5–26 distinct sentences, about 14 on average (11 before fit and wells were added).
 
 ### 3. One short state per sentence, one question each
 
@@ -62,12 +71,12 @@ Every distinct sentence is its own state in a batch, with the same question:
 
 ```json
 {"batch": {
-  "p26s7": {"state": "The piece leaves no holes under it and makes no bump on top.",
-            "questions": {"look": {"type": "choice",
-              "instructions": "How does the stack look after the piece lands?",
-              "criteria": {"clean": "flat with no holes", "messy": "holes or a tall tower"}}}},
-  "p26s11": {"state": "The piece leaves one hole under it and makes a tall tower on top.",
-             "questions": {"look": {…same question…}}},
+  "p81s10": {"state": "The piece leaves no holes under it and makes no bump on top. It clears one line. It fits snugly.",
+             "questions": {"look": {"type": "choice",
+               "instructions": "How does the stack look after the piece lands?",
+               "criteria": {"clean": "flat with no holes", "messy": "holes or a tall tower"}}}},
+  "p81s7": {"state": "The piece leaves one hole under it and makes a big bump on top. It fits loosely.",
+            "questions": {"look": {…same question…}}},
   …
 }}
 ```
@@ -75,13 +84,17 @@ Every distinct sentence is its own state in a batch, with the same question:
 Keys are `p<piece number>s<sentence number>`. The piece number means an answer that arrives after
 the piece has landed is never applied to the next one.
 
-In a real game with 17 distinct sentences for one piece, the perfect answer called exactly one of
-them *clean*: "The piece leaves no holes under it and makes no bump on top."
+In a real game with 13 distinct sentences for one piece, the perfect answer called exactly one of
+them *clean*: "The piece leaves no holes under it and makes no bump on top. It clears one line. It
+fits snugly."
 
 ### 4. The answers become a plan
 
 `Decide` ranks the spots by their sentence's probability of *clean* and takes the best one the piece
-can still reach from where it is now. It then plans the key presses a player would make:
+can still reach from where it is now. Spots that share a sentence get the same answer, so among
+them the game's own ranking (see [Perfect answers](#perfect-answers)) picks, which for spots that
+read the same means the flattest one. Before, ties went to the leftmost spot. It then plans the key
+presses a player would make:
 
 1. rotate (clockwise once or twice, or counterclockwise once),
 2. slide left or right one column at a time,
@@ -96,14 +109,20 @@ nothing to ask.
 
 - **Model sees:** the falling piece and how many distinct landing spots Laya is reading.
 - **Agent:** the planned presses and the chosen sentence with its P(clean), for example
-  "P(clean) 0.95: The piece leaves no holes under it and makes no bump on top."
+  "P(clean) 0.96: The piece leaves no holes under it and makes no bump on top. It clears one line.
+  It fits snugly."
 - One bar per sentence with Laya's answer (clean or messy, and its probability).
 
 ## Perfect answers
 
 The oracle ranks spots with a standard Tetris heuristic (weights from Yiyuan Lee's near-perfect
 player: aggregate height −0.51, lines +0.76, holes −0.36, bumpiness −0.18) and answers *clean* for
-the best spot only.
+the best spot only. The best spot always fits snugly.
+
+The heuristic doesn't count deep wells, and it sometimes picks a spot that leaves one. Laya,
+reading "It leaves a deep well", avoids those spots, and now outplays the oracle: over seeds 1–20
+it averaged 1,124 lines to the oracle's 598 (see [Laya performance](../laya-performance.md)). So for
+Tetris the oracle is a check that the descriptions and `Decide` work, not a ceiling.
 
 ## Notes
 

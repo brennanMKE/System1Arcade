@@ -19,13 +19,17 @@ type placement struct {
 	top       int // highest row the piece reaches, counted from the floor
 	aggregate int
 	bumpiness int
+	wells     int
 	value     float64
 }
 
-type stats struct{ holes, height, aggregate, bumpiness int }
+// stats measures a board. wells counts deep wells: columns at least 3 rows
+// below both neighbors, with the walls counting as tall neighbors.
+type stats struct{ holes, height, aggregate, bumpiness, wells int }
 
 func boardStats(b *[rows][cols]int) stats {
 	var s stats
+	var hs [cols]int
 	prev := -1
 	for x := 0; x < cols; x++ {
 		h := 0
@@ -38,12 +42,25 @@ func boardStats(b *[rows][cols]int) stats {
 				s.holes++
 			}
 		}
+		hs[x] = h
 		s.aggregate += h
 		s.height = max(s.height, h)
 		if prev >= 0 {
 			s.bumpiness += abs(h - prev)
 		}
 		prev = h
+	}
+	for x := 0; x < cols; x++ {
+		l, r := rows, rows
+		if x > 0 {
+			l = hs[x-1]
+		}
+		if x < cols-1 {
+			r = hs[x+1]
+		}
+		if min(l, r)-hs[x] >= 3 {
+			s.wells++
+		}
 	}
 	return s
 }
@@ -127,7 +144,7 @@ func (t *Tetris) placements() []placement {
 			s := boardStats(&b)
 			out = append(out, placement{
 				rot: rot, x: x, actions: acts, minC: minC, maxC: maxC, top: top,
-				lines: lines, newHoles: s.holes - before.holes, height: s.height, aggregate: s.aggregate, bumpiness: s.bumpiness,
+				lines: lines, newHoles: s.holes - before.holes, height: s.height, aggregate: s.aggregate, bumpiness: s.bumpiness, wells: s.wells,
 				// Weights from Yiyuan Lee's near-perfect Tetris heuristic.
 				value: -0.51*float64(s.aggregate) + 0.76*float64(lines) - 0.36*float64(s.holes) - 0.18*float64(s.bumpiness),
 			})
@@ -164,15 +181,30 @@ func grade(v, from, step int) int {
 }
 
 // describe turns placement p into one sentence. The model cannot count or
-// compare, so the arithmetic happens here and it gets the conclusion in words.
-func (p placement) describe(before stats) string {
+// compare, so the arithmetic happens here and it gets the conclusions in
+// words. snug says p leaves the flattest top of the spots with the same holes
+// and lines, which separates spots that would otherwise read the same.
+func (p placement) describe(before stats, snug bool) string {
 	bump := max(grade(p.bumpiness-before.bumpiness, 0, 2), grade(p.top*cols-before.aggregate, 3*cols, cols))
-	s := fmt.Sprintf("The piece leaves %s under it and makes %s on top.", holeWords[min(4, max(0, p.newHoles))], bumpWords[bump])
+	s := fmt.Sprintf("The piece leaves %s under it and makes %s on top.", holeWords[p.holeClass()], bumpWords[bump])
 	if p.lines > 0 {
-		s += fmt.Sprintf(" It completes %s.", lineWords[p.lines])
+		s += fmt.Sprintf(" It clears %s.", lineWords[p.lines])
+	}
+	if snug {
+		s += " It fits snugly."
+	} else {
+		s += " It fits loosely."
+	}
+	switch {
+	case p.wells > before.wells:
+		s += " It leaves a deep well."
+	case p.wells < before.wells:
+		s += " It fills a deep well."
 	}
 	return s
 }
+
+func (p placement) holeClass() int { return min(4, max(0, p.newHoles)) }
 
 var lookQuestion = map[string]any{"look": game.Choice("How does the stack look after the piece lands?", map[string]string{
 	"clean": "flat with no holes", "messy": "holes or a tall tower"})}
@@ -183,8 +215,16 @@ func (t *Tetris) sentences(spots []placement) (keys []string, text map[string]st
 	before := boardStats(&t.board)
 	byText := map[string]string{}
 	text = map[string]string{}
+	// The flattest top among the spots with the same holes and lines.
+	flattest := map[[2]int]int{}
 	for _, p := range spots {
-		d := p.describe(before)
+		c := [2]int{p.holeClass(), p.lines}
+		if f, ok := flattest[c]; !ok || p.bumpiness < f {
+			flattest[c] = p.bumpiness
+		}
+	}
+	for _, p := range spots {
+		d := p.describe(before, p.bumpiness == flattest[[2]int{p.holeClass(), p.lines}])
 		k, ok := byText[d]
 		if !ok {
 			// Keys carry the piece number so late answers about an earlier
@@ -243,7 +283,9 @@ func (t *Tetris) Decide(a game.Answers) game.Decision {
 		return game.Decision{Actions: []string{"noop"}, Note: "answers were for an earlier piece"}
 	}
 	// Rank the spots that were asked about, best answer first, and take the
-	// first one the piece can still reach from where it is now.
+	// first one the piece can still reach from where it is now. Spots that
+	// share a sentence get the same answer; among them the game's own ranking
+	// decides, which for spots that read the same prefers the flattest top.
 	order := make([]int, 0, len(t.asked.spots))
 	for i, k := range t.asked.keys {
 		if _, ok := a[k+".look"]; ok {
@@ -251,7 +293,13 @@ func (t *Tetris) Decide(a game.Answers) game.Decision {
 		}
 	}
 	pClean := func(i int) float64 { return a[t.asked.keys[i]+".look"].Probabilities["clean"] }
-	sort.SliceStable(order, func(x, y int) bool { return pClean(order[x]) > pClean(order[y]) })
+	sort.SliceStable(order, func(x, y int) bool {
+		px, py := pClean(order[x]), pClean(order[y])
+		if px == py {
+			return t.asked.spots[order[x]].value > t.asked.spots[order[y]].value
+		}
+		return px > py
+	})
 	_, text := t.sentences(t.asked.spots)
 	for n, i := range order {
 		p := t.asked.spots[i]

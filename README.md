@@ -13,7 +13,7 @@ Built with Go and [Wails](https://wails.io), so it runs on macOS, Windows and Li
 | Tetris | Frogger | Space Invaders |
 |---|---|---|
 | ![Laya playing Tetris in lockstep: 83 lines, level 8](docs/images/tetris.png) | ![Laya playing Frogger on level 2, lining up with an open home](docs/images/frogger.png) | ![Laya playing Space Invaders: 18 invaders left on wave 1](docs/images/invaders.png) |
-| Lockstep, 83 lines in. Best run: 442 lines, level 44 | Realtime, level 2. Best run: 13 homes, reaching level 3 | Realtime, 18 invaders left. Best run: cleared wave 1 |
+| Lockstep, 83 lines in. Best run: 3,999 lines, level 399, stopped at 10,000 pieces | Realtime, level 2. Best run: 13 homes, reaching level 3 | Realtime, 18 invaders left. Best run: cleared wave 1 |
 
 In each screenshot, Laya is the player. The side panel shows its latest decision, its answer to each
 question, and the plain-English description it was given ("Model sees").
@@ -92,7 +92,7 @@ What made Laya play well, learned by measuring its answers against a perfect "or
 
 | Game | States and questions per decision | How answers become input |
 |---|---|---|
-| **Tetris** | One sentence per distinct landing spot ("The piece leaves no holes under it and makes a small bump on top. It completes one line."), asked *clean or messy?* | The piece goes to the spot with the highest P(clean): rotate, shift and hard drop, one tap per tick |
+| **Tetris** | One sentence per distinct landing spot ("The piece leaves no holes under it and makes a small bump on top. It clears one line. It fits snugly."), asked *clean or messy?* | The piece goes to the spot with the highest P(clean), and to the flattest one when spots read the same: rotate, shift and hard drop, one tap per tick |
 | **Frogger** | One sentence per move ("Hopping up lands in a deadly place: a square a car will drive through in 0.3 seconds") asked *safe or deadly?*, plus where the nearest empty home is | Hop toward the goal if it's safe, else wait if staying is safe, else take the safest move |
 | **Space Invaders** | Whether a bomb is about to hit, which way is open, whether each side is safe, what is directly above the cannon, where the next target is | Dodge, else fire when an invader is above, else slide toward the target (it leads moving targets) |
 
@@ -227,8 +227,8 @@ go test ./internal/...   # includes an oracle-ceiling test for every game
 
 ## Known limitations
 
-- Laya's Tetris play varies from game to game. Some seeds run for hundreds of lines; others top out
-  early.
+- Laya's Tetris games still end early now and then. Of 20 seeds played to 10,000 pieces, 8 reached
+  the cap, and the shortest game ended at 392 lines.
 - Frogger's safety window doesn't yet account for decision latency, which costs lives once traffic
   speeds up on level 3.
 - Space Invaders loses lives that perfect answers avoid; the oracle reaches waves 7–10.
