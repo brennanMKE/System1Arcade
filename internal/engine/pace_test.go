@@ -27,3 +27,29 @@ func TestOracleAtInputSpeeds(t *testing.T) {
 		}
 	}
 }
+
+// An agent whose answers come from a cache decides many times per tick in
+// realtime. A press it has made must still reach the game rather than be
+// replaced by the next decision before a tick sees it.
+func TestFastAgentInRealtime(t *testing.T) {
+	floor := map[string]int{"tetris": 1000, "frogger": 1000, "invaders": 300}
+	for _, info := range New().Games() {
+		e := New()
+		e.Load(info.ID, 1)
+		e.SetAgentPace(HumanPace)
+		for tick := 0; tick < 20000 && !e.State().Status.Over; tick++ {
+			for i := 0; i < 5; i++ {
+				ans, _ := e.Oracle()
+				e.Decide(ans, nil)
+			}
+			e.mu.Lock()
+			e.tickLocked()
+			e.mu.Unlock()
+		}
+		st := e.State()
+		t.Logf("%-8s score %d at tick %d", info.ID, st.Status.Score, st.Tick)
+		if st.Status.Score < floor[info.ID] {
+			t.Errorf("%s scored %d deciding 5 times a tick, want at least %d", info.ID, st.Status.Score, floor[info.ID])
+		}
+	}
+}

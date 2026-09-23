@@ -279,7 +279,14 @@ func (e *Engine) Decide(ans game.Answers, meta map[string]any) (game.Decision, S
 	if len(plan) == 1 && e.holding(plan[0]) {
 		plan = nil // keep holding the same way rather than let go and press again
 	} else {
-		clear(e.agentHold) // let go of the previous input, as a player would
+		// Let go of the previous input, as a player would, but keep a press
+		// no tick has seen yet: a fast agent deciding again within the same
+		// tick would otherwise withdraw every tap before it lands.
+		for b := range e.agentHold {
+			if !e.agentPress[b] {
+				delete(e.agentHold, b)
+			}
+		}
 	}
 	e.macro = plan
 	e.countDecision(strings.Join(d.Actions, " "), d.Note, meta)
