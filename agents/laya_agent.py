@@ -16,6 +16,8 @@ Policies:
     --policy oracle     the game's own correct answers: the best these questions can do
     --policy random     random answers: the floor
 
+--weights (or SYSTEM1_LAYA_WEIGHTS) applies a head tuned by agents/finetune.py.
+
 With --policy laya, answers are cached by (state, question) because Laya
 answers the same prompt the same way; --cache-size 0 or SYSTEM1_LAYA_CACHE=0
 turns that off. A Laya server behind --policy sidecar keeps its own cache.
@@ -88,10 +90,9 @@ def make_policy(args, api):
             return answers_from(http("POST", args.sidecar, req))
         return sidecar, None
 
-    import laya  # pip install laya
-    from laya_batch import AnswerCache, answer_cached, cache_size_from_env, predict_many
+    from laya_batch import AnswerCache, answer_cached, cache_size_from_env, load_model, predict_many  # pip install laya
 
-    model = laya.load(args.model, device=args.device)
+    model = load_model(args.model, args.weights, device=args.device)
     cache = AnswerCache(cache_size_from_env() if args.cache_size is None else args.cache_size)
 
     def single(prompts):
@@ -110,7 +111,8 @@ def main():
     p.add_argument("--game", choices=["tetris", "frogger", "invaders"], help="load this game first")
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--policy", choices=["laya", "sidecar", "oracle", "random"], default="laya")
-    p.add_argument("--model", default="convaiinnovations/laya", help="Laya checkpoint for --policy laya")
+    p.add_argument("--model", help="Laya checkpoint for --policy laya (default: $SYSTEM1_LAYA_MODEL or convaiinnovations/laya)")
+    p.add_argument("--weights", help="tuned weights from agents/finetune.py for --policy laya (default: $SYSTEM1_LAYA_WEIGHTS)")
     p.add_argument("--device", help="torch device for --policy laya: mps, cuda or cpu (default: auto)")
     p.add_argument("--cache-size", type=int, help="answers to cache for --policy laya, 0 = off (default: $SYSTEM1_LAYA_CACHE or 10000)")
     p.add_argument("--sidecar", default="http://127.0.0.1:8000/predict", help="predict URL for --policy sidecar")

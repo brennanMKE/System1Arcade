@@ -150,6 +150,10 @@ reports the cache's hits, misses and hit rate; `--stats-every 10` also prints th
 and `--cache-size 0` turns the cache off. The app itself doesn't cache a custom endpoint's answers,
 since another model may not answer the same prompt the same way.
 
+`--weights <dir>` (or `SYSTEM1_LAYA_WEIGHTS`) applies a decision head tuned by `agents/finetune.py`
+on top of the base model; see [Fine-tuning on oracle labels](laya-performance.md#fine-tuning-on-oracle-labels).
+Without it the server uses the base model.
+
 ### TypeSafe Jev
 
 [Jev](https://docs.typesafe.ai/api) uses the same question types and answer format but takes one

@@ -12,6 +12,9 @@ Answers are cached by (state, question), since Laya gives the same answer to
 the same prompt; only misses reach the model. --cache-size 0 (or
 SYSTEM1_LAYA_CACHE=0) turns the cache off.
 
+--weights (or SYSTEM1_LAYA_WEIGHTS) applies a head tuned by agents/finetune.py
+on top of the base model; without it the base model answers.
+
 A custom agent implements the same POST contract with its own logic.
 """
 import argparse
@@ -28,16 +31,16 @@ def main():
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--host", default="127.0.0.1", help="address to listen on (0.0.0.0 to serve other machines)")
     p.add_argument("--port", type=int, default=0, help="port to listen on (0 = any free port)")
-    p.add_argument("--model", default="convaiinnovations/laya")
+    p.add_argument("--model", help="base checkpoint (default: $SYSTEM1_LAYA_MODEL or convaiinnovations/laya)")
+    p.add_argument("--weights", help="tuned weights from agents/finetune.py (default: $SYSTEM1_LAYA_WEIGHTS, else none)")
     p.add_argument("--device", help="mps, cuda or cpu (default: auto)")
     p.add_argument("--cache-size", type=int, help="answers to cache, 0 = off (default: $SYSTEM1_LAYA_CACHE or 10000)")
     p.add_argument("--stats-every", type=float, default=0, help="print cache stats every N seconds (0 = never)")
     args = p.parse_args()
 
-    import laya
-    from laya_batch import AnswerCache, answer_cached, cache_size_from_env, predict_many
+    from laya_batch import AnswerCache, answer_cached, cache_size_from_env, load_model, predict_many
 
-    model = laya.load(args.model, device=args.device)
+    model = load_model(args.model, args.weights, device=args.device)
     cache = AnswerCache(cache_size_from_env() if args.cache_size is None else args.cache_size)
     lock = threading.Lock()
 

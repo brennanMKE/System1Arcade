@@ -37,3 +37,6 @@ Thumbs.db
 
 # Screenshots captured by scripts/screenshot.sh
 screenshots/
+
+# Laya fine-tuning data and tuned weights (agents/oracle_selfplay.py, agents/finetune.py)
+.laya-tuned/

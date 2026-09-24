@@ -10,6 +10,7 @@ answer_cached puts an LRU of answers in front of either, so repeated
 """
 
 import json
+import sys
 from collections import OrderedDict
 
 import numpy as np
@@ -162,3 +163,50 @@ def answer_cached(prompts, run, cache=None):
     else:
         cache.skipped_calls += 1
     return {key: {qid: found[keys[key, qid]] for qid in p["questions"]} for key, p in prompts.items()}
+
+
+# --- Loading a checkpoint, optionally with tuned weights --------------------
+#
+# agents/finetune.py writes a small directory: tuned.safetensors holds only the
+# tensors it trained (the decision head on top of the frozen encoder), and
+# tuned.json says which base checkpoint they belong to. load_model applies
+# them on top of the base model, so the 1.6 GB base download is shared and a
+# tuned checkpoint is about 100 MB.
+
+MODEL_ENV = "SYSTEM1_LAYA_MODEL"      # base checkpoint (default convaiinnovations/laya)
+WEIGHTS_ENV = "SYSTEM1_LAYA_WEIGHTS"  # a directory written by agents/finetune.py
+TUNED_TENSORS, TUNED_META = "tuned.safetensors", "tuned.json"
+
+
+def apply_tuned(agent, weights_dir):
+    """Copy tuned tensors from weights_dir into a loaded laya Agent, in place."""
+    import os
+    from safetensors.torch import load_file
+
+    with open(os.path.join(weights_dir, TUNED_META)) as f:
+        meta = json.load(f)
+    tensors = load_file(os.path.join(weights_dir, TUNED_TENSORS))
+    params = dict(agent.model.named_parameters())
+    for name, t in tensors.items():
+        if name not in params:
+            raise ValueError(f"{weights_dir}: tensor {name!r} is not in the base model")
+        if tuple(t.shape) != tuple(params[name].shape):
+            raise ValueError(f"{weights_dir}: {name!r} has shape {tuple(t.shape)}, the base model {tuple(params[name].shape)}")
+    with torch.no_grad():
+        for name, t in tensors.items():
+            params[name].copy_(t.to(params[name].dtype))
+    agent.tuned = meta
+    return agent
+
+
+def load_model(model=None, weights=None, device=None):
+    """laya.load(model) plus tuned weights from `weights` or $SYSTEM1_LAYA_WEIGHTS, if either is set."""
+    import os
+    import laya
+
+    agent = laya.load(model or os.environ.get(MODEL_ENV) or "convaiinnovations/laya", device=device)
+    weights = weights or os.environ.get(WEIGHTS_ENV, "").strip()
+    if weights:
+        apply_tuned(agent, os.path.expanduser(weights))
+        print(f"laya: applied tuned weights from {weights}", file=sys.stderr, flush=True)
+    return agent
