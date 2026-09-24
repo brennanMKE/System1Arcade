@@ -43,3 +43,6 @@ screenshots/
 
 # Release DMGs (scripts/release.sh)
 dist/
+
+# Agent runs in a Tart VM (scripts/run-agent-vm.sh)
+build/agent-vm/

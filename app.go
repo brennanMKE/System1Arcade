@@ -46,6 +46,12 @@ func (a *App) startup(ctx context.Context) {
 		}
 	}()
 
+	if spec := os.Getenv(AutostartEnv); spec != "" {
+		if err := a.autostart(spec); err != nil {
+			log.Printf("autostart: %v", err)
+		}
+	}
+
 	addr := os.Getenv("SYSTEM1_ADDR")
 	if addr == "" {
 		addr = api.DefaultAddr

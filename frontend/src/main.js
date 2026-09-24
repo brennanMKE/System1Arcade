@@ -100,7 +100,9 @@ async function init() {
     toggleAgent(agentState === 'off' || agentState === 'error');
   };
   setInterval(async () => showAgent(await AgentStatus()), 500);
-  showAgent(await AgentStatus());
+  const st = await AgentStatus();
+  showAgent(st);
+  if (st.state !== 'off') $('launch').hidden = true; // started by SYSTEM1_AUTOSTART
 
   window.addEventListener('resize', resize);
   requestAnimationFrame(draw);

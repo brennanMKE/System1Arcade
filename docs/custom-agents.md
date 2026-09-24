@@ -176,6 +176,20 @@ Several open projects serve Jev-style `/v1/systemone` endpoints, for example
 [simple-jev](https://github.com/featherless-ai/simple-jev) (any open model). Configure them like Jev:
 their URL, the model name they expect, and batching off. None have been tested here yet.
 
+## Scoring an agent in a VM
+
+[`scripts/run-agent-vm.sh`](../scripts/run-agent-vm.sh) runs the real app in a disposable macOS VM,
+points it at your server, plays each game and seed at the default settings and writes the scores
+to `build/agent-vm/<run-id>/results.jsonl`:
+
+```sh
+scripts/run-agent-vm.sh --games frogger,tetris,invaders --seeds 1,2,3 --cap 300 \
+  --server path/to/my-server --server-cmd './my-server --port $PORT'
+```
+
+It starts the agent with the test-only `SYSTEM1_AUTOSTART=<game>[:<seed>]` switch, which does what
+pressing Start does. See [UI testing in a Tart VM](ui-testing-vm.md).
+
 ## Alternative: drive the game yourself
 
 Instead of waiting to be called, an agent can pull prompts and push decisions through the app's

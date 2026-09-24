@@ -30,8 +30,8 @@ question, and the plain-English description it was given ("Model sees").
   connecting a standalone Laya server or TypeSafe's Jev
 - [Screenshots](docs/screenshots.md): capturing the app window from scripts
 - [Releasing](docs/releasing.md): the signed, notarized DMG and the GitHub release
-- [UI testing in a Tart VM](docs/ui-testing-vm.md): testing the app window inside a disposable
-  macOS VM, never on the Mac in use
+- [UI testing in a Tart VM](docs/ui-testing-vm.md): running the app window inside a disposable
+  macOS VM, never on the Mac in use, and scoring a custom agent there with `scripts/run-agent-vm.sh`
 
 ## Quick start
 
