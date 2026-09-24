@@ -14,8 +14,8 @@ Tetris results are over seeds 1–20, played headless in lockstep with no input 
 | Game | Laya's best observed run | With perfect answers | Main weakness |
 |---|---|---|---|
 | Tetris | 3,999 lines, level 399, 36,284,268 points (lockstep, seed 4, stopped at 10,000 pieces) | 598 lines on average over 20 seeds (3,000-piece cap) | Now and then a game ends early: the shortest of 20 ended at 392 lines |
-| Frogger | 13 homes, levels 1 and 2 cleared without losing a life, 7,580 points (realtime, seed 3) | 11,000–23,000 points | Loses lives once traffic speeds up on level 3 |
-| Space Invaders | Cleared wave 1, 1,810 points (realtime, seed 7) | Waves 7–10, 6,050–9,130 points | Loses lives to bombs that perfect answers avoid |
+| Frogger | 40 homes, reaching level 9, 24,890 points (realtime at 6 inputs/s, seed 2) | 11,000–23,000 points | Loses lives once traffic speeds up |
+| Space Invaders | Reached wave 5, 4,900 points (realtime at 6 inputs/s, seed 4) | Waves 7–10, 6,050–9,130 points | Loses lives to bombs that perfect answers avoid |
 
 "Perfect answers" is the *oracle*: the game answers its own questions from its true internal
 state (`GET /v1/oracle`). It shows the best these questions and decision rules can do, which
@@ -69,6 +69,24 @@ answers were misses, because its landing-spot sentences come from a small set of
 
 The agent's default input speed is 6 inputs per second (Settings → Agent input speed), well below
 what Laya can decide, so in normal play the input limit, not the model, sets the pace.
+
+#### Scores at the default settings
+
+The real app, realtime at 6 inputs per second, driven by `agents/laya_agent.py` over `/v1`, seeds
+1–5, mean (sd):
+
+| Game | Before the cache | With the cache |
+|---|---|---|
+| Frogger | 11,600 (7,125) points, 19 homes | 19,706 (5,748) points, 32 homes |
+| Space Invaders | 1,198 (505) points, wave 1–2 | 4,090 (742) points, waves 3–5 |
+| Tetris | 49,100 (17,216) points, 117 lines | 55,977 (12,927) points, 139 lines |
+
+At first the cache made Frogger and Space Invaders far worse (34 and 22 points on average). A
+cached agent decides many times within one tick, and each decision let go of the previous press
+before the game saw it, so taps (hops, fire) never landed. The engine now keeps a press until a
+tick has seen it, and `TestFastAgentInRealtime` covers it. Tetris asks once per piece and wasn't
+affected. At 6 inputs per second its games end at levels 9–16, when pieces fall faster than they
+can be moved into place, so input speed limits Tetris here, not Laya's judgment.
 
 ## Question accuracy
 
@@ -182,14 +200,112 @@ Perfect-answer scores at different input speeds (seed 1, capped at 3,000 decisio
 Tetris loses the most, because at high levels pieces fall faster than a slow player can move them.
 Frogger scores slightly higher at 6 inputs/s because its safety checks account for the delay.
 
+## Fine-tuning on oracle labels
+
+The oracle labels every question at every step, so self-play can produce training data at no cost.
+This was tried for Frogger and Space Invaders, where the oracle is the ceiling, and it didn't make
+Laya play better: base Laya already gives the oracle's answer to every question these games ask.
+
+### Base Laya against the oracle
+
+`agents/oracle_selfplay.py` plays seeds in lockstep, asks Laya and the oracle the same questions at
+every step, and reports each game's score and the agreement per question. Seeds 1–20, games capped
+at 100,000 decisions, with no input limit ("full speed") and at the app's default 6 inputs/s
+(`go run ./cmd/headless -pace 10`):
+
+| Game | Input speed | Oracle: mean score (spread) | Laya: mean score (spread) | Laya agrees with the oracle |
+|---|---|---|---|---|
+| Frogger | full speed | 24,136 (sd 5,505; 11,170–30,840) | 24,111 (sd 6,215; 5,060–30,980) | 100% of 36,227 decisions, all six questions |
+| Frogger | 6 inputs/s | 20,907 (sd 3,836) | 21,488 (sd 4,454) | 100% of 35,656 decisions |
+| Space Invaders | full speed | 8,128 (sd 2,350; 1,800–12,000) | the same games, point for point | 100%, except 99.77% on the open-space question |
+| Space Invaders | 6 inputs/s | 5,765 (sd 1,264) | the same games | 100%, except 99.78% on the open-space question |
+
+The one disagreement is "There is open space on both sides of the cannon.", where the oracle
+sometimes answers *right*: the sentence doesn't say which side it means, so no model could learn it.
+It never changed a game. In Space Invaders, Laya's games are identical to the oracle's. In Frogger
+they differ only where both sides are safe: the frog takes the side with the higher P(safe), and
+Laya's probabilities there differ slightly (turtles 0.9998, a log 0.994, safe ground 0.993, clear
+road 0.986) where the oracle's are all 1. That makes no difference on average.
+
+So the gap between Laya's realtime runs and the oracle is timing, not reading. In lockstep Laya
+already plays as well as the oracle.
+
+### What was trained
+
+- **Data.** 80 games (seeds 1–40 at both input speeds) where each decision used Laya's answers or
+  the oracle's at random, so states both reach are covered. Every prompt was labelled by the oracle.
+  The games repeat a small set of sentences: 183 distinct prompts (155 Frogger, 28 Space Invaders),
+  about 350 KB. Prompts whose label the sentence doesn't determine are dropped (none were, at the
+  98% threshold). A fifth of the distinct prompts (46), chosen by a hash of the text, were kept out
+  of training to check for memorized sentences.
+- **Model.** Only the decision head: its 2 transformer layers, the question-type embedding and the
+  scorer, 26.2M of 421M parameters. The ModernBERT encoder is frozen, so each prompt is encoded once.
+  156 Tetris prompts from Laya's own games keep their base answers as targets, and an L2 pull toward
+  the base head keeps it close to where it started.
+- **Time.** 38 seconds for 40 epochs on the M4 Pro's GPU; about a minute including loading and
+  encoding. The tuned head is a 100 MB file applied on top of the base model.
+
+### Results
+
+Answers (`agents/finetune.py` reports these before and after):
+
+| Prompts | Base: accuracy, lowest P(right answer) | Tuned: accuracy, lowest P(right answer) |
+|---|---|---|
+| Training (137) | 100%, 0.495 | 100%, 0.930 |
+| Held-out sentences (46) | 100%, 0.681 | 100%, 0.984 |
+| Hand-written paraphrases not from the games (13) | 100%, 0.620 | 100%, 0.752 |
+
+The tuned head is more confident: the least certain answer, "The target is a little to the right
+of the cannon." at 0.495, went to 0.93, and sentences it never saw improved as much as ones it did.
+But the answers were already all right, and the games only act on which answer wins.
+
+Games, on held-out seeds 101–120 (Tetris on seeds 1–20, 3,000-piece cap), base head against tuned:
+
+| Game | Base: mean (sd) | Tuned: mean (sd) | Seed by seed |
+|---|---|---|---|
+| Frogger, full speed | 25,762 (3,750) | 25,068 (2,857) | 8 better, 12 worse; mean change −694 (sd 3,853) |
+| Frogger, 6 inputs/s | 21,798 (4,971) | 20,584 (6,112) | 9 better, 9 worse, 2 the same; mean change −1,215 (sd 5,281) |
+| Space Invaders, full speed | 8,898 (1,977) | 8,898 (1,977) | identical games |
+| Space Invaders, 6 inputs/s | 5,504 (1,453) | 5,504 (1,453) | identical games |
+| Tetris, lines | 1,123 (median 1,197; 392–1,199) | 1,082 (median 1,197; 331–1,199) | 11 within 3 lines, 6 better, 3 worse (−867, −385, −289) |
+
+Nothing improved. Space Invaders played the same games. Frogger's changes are within the spread:
+the tuned head gives every safe move P(safe) = 1.00, so Frogger's left-or-right tie-break loses the
+small preferences described above and games take different paths. Tetris moved slightly, even with
+its prompts held to their base answers: 3 of 156 spots changed their top answer, and small changes
+to P(clean) reorder spots, which changes whole games.
+
+Tetris wasn't trained. Its oracle marks only the best spot for each piece as clean, so the same
+sentence is labelled clean for one piece and messy for another (36 of 156 prompts had both labels),
+and training toward it would teach the heuristic Laya already beats.
+
+### Doing it again
+
+```sh
+go run ./cmd/headless -addr 127.0.0.1:8799 &            # add -pace 10 for the app's 6 inputs/s
+.venv/bin/python agents/oracle_selfplay.py --api http://127.0.0.1:8799/v1 --game frogger \
+    --seeds 1-30 --policy mix --out .laya-tuned/data/frogger-train.jsonl
+.venv/bin/python agents/oracle_selfplay.py --api http://127.0.0.1:8799/v1 --game tetris \
+    --seeds 201-210 --policy laya --out .laya-tuned/data/anchor-tetris.jsonl
+.venv/bin/python agents/finetune.py --data '.laya-tuned/data/*-train.jsonl' \
+    --anchor .laya-tuned/data/anchor-tetris.jsonl --out .laya-tuned/head
+.venv/bin/python agents/oracle_selfplay.py --api http://127.0.0.1:8799/v1 --game frogger \
+    --seeds 101-120 --policy laya --weights .laya-tuned/head
+```
+
+`.laya-tuned/` is ignored by git. `--weights` (or `SYSTEM1_LAYA_WEIGHTS`) loads a tuned head in
+`agents/laya_server.py`, `agents/laya_agent.py` and `agents/oracle_selfplay.py`; without it they use
+the base model. The app doesn't ship or download a tuned head: it wouldn't play better. The tooling is
+worth rerunning when a new wording or a new game gives questions base Laya misreads.
+
 ## Ways to improve
 
 ### Better answers
 
-1. **Fine-tune Laya on the games.** The oracle gives a perfect label for every question at every
-   step, so self-play can produce unlimited training data at no cost. Fine-tuning on it (or training
-   a small calibration layer) should fix answers the wording can't. `eval_questions.py` already
-   measures the result.
+1. **Fine-tune Laya on the games.** Tried: see [Fine-tuning on oracle labels](#fine-tuning-on-oracle-labels).
+   In Frogger and Space Invaders base Laya already agrees with the oracle on every question and plays
+   as well as it in lockstep, so a tuned head raised confidence but not scores. It becomes useful
+   again if a new wording or game gives questions base Laya gets wrong.
 2. **A better Tetris oracle.** Laya now outplays the oracle, so it's no longer a ceiling. Adding a
    deep-well penalty of 0.5 per well to the oracle's ranking raised it from 598 to 886 lines on
    average over seeds 1–20, but that weight was tuned on those same seeds.
@@ -204,8 +320,8 @@ Frogger scores slightly higher at 6 inputs/s because its safety checks account f
 5. **Cache answers.** Done: see [Answer cache](#answer-cache). More than 99.9% of answers in all
    three games now come from the cache, so a decision usually takes under a millisecond.
 6. **Faster runtimes.** [laya-mlx](https://github.com/mizorewww/laya-mlx) runs Laya natively on Apple
-   Silicon and is reported to be much faster in its Tetris demo (up to 50 times, in under 1 GB of
-   memory); [@receptron/laya](https://github.com/receptron/laya) runs it with ONNX Runtime from
+   Silicon (its demo plays Snake; claims of large speedups come from posts comparing it with Jev's
+   hosted API, not from the repo); [@receptron/laya](https://github.com/receptron/laya) runs it with ONNX Runtime from
    Node.js. Either could replace the PyTorch server behind the same endpoint.
 7. **Count the model's delay in descriptions.** Frogger and Space Invaders already account for the
    input limit. They don't yet add the model's own 60–120 ms on a new sentence, which matters most
@@ -213,8 +329,8 @@ Frogger scores slightly higher at 6 inputs/s because its safety checks account f
 
 ### Better measurement
 
-8. **A repeatable benchmark.** Apart from Tetris, the numbers above are single runs. A script that
-   plays many seeds per game and reports the mean and spread for Laya, the oracle and random answers
-   would make improvements measurable.
+8. **A repeatable benchmark.** `agents/oracle_selfplay.py` now plays many seeds in lockstep and
+   reports the mean and spread of scores and the agreement per question, for Laya (base or tuned) or
+   the oracle. It doesn't yet cover realtime play or random answers.
 9. **Realtime accuracy checks.** `eval_questions.py` checks answers in lockstep. Checking them in
    realtime would show how often an answer is right when asked but wrong by the time it's used.

@@ -13,7 +13,7 @@ Built with Go and [Wails](https://wails.io), so it runs on macOS, Windows and Li
 | Tetris | Frogger | Space Invaders |
 |---|---|---|
 | ![Laya playing Tetris in lockstep: 83 lines, level 8](docs/images/tetris.png) | ![Laya playing Frogger on level 2, lining up with an open home](docs/images/frogger.png) | ![Laya playing Space Invaders: 18 invaders left on wave 1](docs/images/invaders.png) |
-| Lockstep, 83 lines in. Best run: 3,999 lines, level 399, stopped at 10,000 pieces | Realtime, level 2. Best run: 13 homes, reaching level 3 | Realtime, 18 invaders left. Best run: cleared wave 1 |
+| Lockstep, 83 lines in. Best run: 3,999 lines, level 399, stopped at 10,000 pieces | Realtime, level 2. Best run: 40 homes, reaching level 9 | Realtime, 18 invaders left. Best run: reached wave 5 |
 
 In each screenshot, Laya is the player. The side panel shows its latest decision, its answer to each
 question, and the plain-English description it was given ("Model sees").
@@ -29,6 +29,8 @@ question, and the plain-English description it was given ("Model sees").
 - [Connecting a custom agent](docs/custom-agents.md): the endpoint contract, Settings, and
   connecting a standalone Laya server or TypeSafe's Jev
 - [Screenshots](docs/screenshots.md): capturing the app window from scripts
+- [UI testing in a Tart VM](docs/ui-testing-vm.md): testing the app window inside a disposable
+  macOS VM, never on the Mac in use
 
 ## Quick start
 
@@ -204,7 +206,8 @@ terminal:
   .venv/bin/python agents/eval_questions.py --game frogger --api http://127.0.0.1:8799/v1
   ```
 - **Headless runs.** `go run ./cmd/headless -addr 127.0.0.1:8799` serves the same API without a
-  window, for benchmarks and CI.
+  window, for benchmarks and CI (`-pace 10` limits the agent to the app's default 6 inputs/s).
+  `agents/oracle_selfplay.py` plays many seeds there and reports the mean and spread of scores.
 - **Screenshots.** `scripts/screenshot.sh` captures the app window; see
   [docs/screenshots.md](docs/screenshots.md).
 
