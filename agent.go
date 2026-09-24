@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -112,6 +113,10 @@ func (m *agentManager) start(parent context.Context, e *engine.Engine, s Setting
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		if ctx.Err() == nil {
+			if state == "error" && m.status.Detail != detail {
+				// Also in the log, since the UI only shows the latest status.
+				log.Printf("agent error: %s", detail)
+			}
 			m.status = AgentStatus{State: state, Detail: detail, Kind: s.Agent}
 		}
 	}

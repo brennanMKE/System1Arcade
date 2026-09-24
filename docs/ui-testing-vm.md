@@ -61,6 +61,8 @@ scripts/run-agent-vm.sh --games frogger,tetris,invaders --seeds 1,2,3 --cap 600 
 | `--input-rate N`, `--no-batch` | 6, batch on | written to the guest's `settings.json`, the same as the Settings sheet |
 | `--slot-timeout SECS` | 3600 | how long to wait for a free VM slot |
 | `--no-build` | build | reuse `build/bin/System 1 Arcade.app` |
+| `--verify FILE`, `--verify-every SECS` | none, 10 | check the agent's answers in the guest (below) |
+| `--agent-url URL` | `http://127.0.0.1:<port>/predict` | point the app at an agent elsewhere, e.g. one on the host at `http://192.168.64.1:8000/predict` |
 
 The server must be an arm64 macOS binary or a script the guest can run. The guest has no Go
 toolchain, so build Go servers on the host (`GOOS=darwin GOARCH=arm64 go build`); a stub Go binary
@@ -91,8 +93,11 @@ bring every revision plus `blobs/`. The current Laya snapshot is 807 MB in 5 fil
    {"agent": "custom", "url": "http://127.0.0.1:8000/predict", "batch": true, "inputRate": 6}
    ```
 
-   starts the server with `nohup` and waits until `curl` gets any HTTP status from its URL, then
-   runs `vm-guest-play.py`. For each game and seed that launches the app fresh with
+   starts the server with `nohup` and waits until `curl` gets any HTTP status from its URL. It
+   then runs Settings' **Test connection** (`App.TestAgent`, the call the Settings sheet makes)
+   and one decision per game, batched and one state per request, against the agent from the guest:
+   `TestAgentLive` in `testagent_test.go`, built on the host with `go test -c` since the guest has
+   no Go (output in `testagent.log`). Then it runs `vm-guest-play.py`. For each game and seed that launches the app fresh with
    `open -n -a … --env SYSTEM1_AUTOSTART=<game>:<seed>`, polls `GET /v1/state` every 0.2 s until
    `status.over` (or until the seed changes, since the agent loop restarts 2 s after a game over),
    screenshots the guest's screen, and quits the app.
@@ -105,8 +110,8 @@ bring every revision plus `blobs/`. The current Laya snapshot is 807 MB in 5 fil
 ### Results
 
 `build/agent-vm/<run-id>/` holds `results.jsonl` (one line per game), `summary.txt`,
-`timings.json`, `server.log`, `app-<game>-<seed>.log`, `screen-<game>-<seed>.png`, `tart-run.log`
-and `build.log`. A line:
+`timings.json`, `server.log`, `app-<game>-<seed>.log`, `screen-<game>-<seed>.png`, `tart-run.log`,
+`build.log`, `testagent.log`, `monitor.jsonl` and, with `--verify`, `verify.jsonl`. A line:
 
 ```json
 {"game": "frogger", "seed": 1, "mode": "realtime", "score": 100, "level": 0, "lives": 0,
@@ -117,7 +122,26 @@ and `build.log`. A line:
 `game_secs` is ticks at 60 per second; `wall_secs` is the time from the API coming up to the end;
 `ticks_per_sec` is the tick rate the game actually got after the agent's first answer;
 `first_answer_secs` is how long after launch the game unpaused. An app that never came up is
-recorded as `{"game", "seed", "error"}`.
+recorded as `{"game", "seed", "error"}`. When the agent has `GET /stats` (laya-server and
+`laya_server.py` do), each line also has `answers_per_sec`, `model_calls` and `misses` for that
+game, and `server_rss_mb` / `app_rss_mb` at its end.
+
+`monitor.jsonl` samples every 5 s: the server's and the app's resident memory and CPU, and the
+server's `/stats`. The summary prints the server's memory range and any log line that looks like
+a panic, a fatal error, an HTTP error or an `agent error:` (the app now logs the agent's errors,
+which the UI only shows as the latest status).
+
+**Checking answers (`--verify FILE`).** `FILE` is JSONL of `{"id", "request", "status",
+"response"}`: requests with the replies a trusted run gave (for laya-server: the same binary on the
+host with `--cache-size 0`, fed laya-go's `testdata/golden` requests). During play the guest posts
+one every `--verify-every` seconds, and after the games all of them; a reply agrees when the status
+matches, every `choice` matches and every number is within 1.5e-4 (answers are rounded to 4
+decimals; the forward pass differs by float noise between machines). One known difference is not
+counted: the answer cache is keyed by (state, question) across batch and single-state requests, as
+in `laya_server.py`, so a noul answer keeps the shape of the request that first asked it, with or
+without `"action"`. Each check's round trip is recorded, so misses measured during play show the
+model's latency while the app is busy. Checks during play take the model for one pass each, so
+keep `--verify-every` well above that (30 s is plenty).
 
 ### Verified runs, 2026-09-23
 

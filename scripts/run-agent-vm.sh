@@ -28,8 +28,16 @@
 #   --server-timeout S  seconds to wait for the server to answer (default: 300)
 #   --model-dir DIR     folder shared read-only into the guest as $MODEL_DIR (symlinks resolved)
 #   --port N            agent server port in the guest (default: 8000)
+#   --agent-url URL     the app's custom agent URL (default: http://127.0.0.1:<port>/predict), e.g.
+#                       a server on the host at http://192.168.64.1:8000/predict to compare with one
+#                       in the guest; --server still starts (pass --server-cmd 'sleep 86400' for none)
 #   --input-rate N      Settings' agent input speed, inputs per second, 0 = full (default: 6)
 #   --no-batch          send one state per request (Settings' batch switch off)
+#   --verify FILE       JSONL of {"request", "status", "response"}: during play (one every
+#                       --verify-every seconds) and after it (all of them) the guest posts each
+#                       request to the agent and compares the reply (choices equal, numbers
+#                       within 1.5e-4)
+#   --verify-every S    seconds between checks during play, 0 = only after (default: 10)
 #   --memory MB         guest memory (default: 8192)
 #   --slot-timeout S    how long to wait for a free VM slot (default: 3600)
 #   --no-build          use the existing build/bin/System 1 Arcade.app
@@ -63,7 +71,7 @@ MAX_MACOS_VMS=${SYSTEM1_VM_SLOTS:-2}   # Apple's limit; lower only to test the w
 GAMES="frogger" SEEDS="1" CAP=300 PORT=8000 INPUT_RATE=6 BATCH=true MEMORY_MB=8192
 SERVER="$REPO/agents/custom_agent_example.py"
 SERVER_CMD='python3 custom_agent_example.py --port $PORT'
-SERVER_TIMEOUT=300 MODEL_DIR="" SLOT_TIMEOUT=3600 BUILD=1 KEEP_EXPORT=0
+SERVER_TIMEOUT=300 MODEL_DIR="" SLOT_TIMEOUT=3600 BUILD=1 KEEP_EXPORT=0 VERIFY="" VERIFY_EVERY=10
 
 log()  { print -r -- "==> $*"; }
 fail() { print -r -- "!! $*" >&2; exit 1; }
@@ -79,8 +87,11 @@ while (( $# )); do
     --server-timeout) SERVER_TIMEOUT="$2"; shift ;;
     --model-dir) MODEL_DIR="${2:A}"; shift ;;
     --port) PORT="$2"; shift ;;
+    --agent-url) AGENT_URL="$2"; shift ;;
     --input-rate) INPUT_RATE="$2"; shift ;;
     --no-batch) BATCH=false ;;
+    --verify) VERIFY="${2:A}"; shift ;;
+    --verify-every) VERIFY_EVERY="$2"; shift ;;
     --memory) MEMORY_MB="$2"; shift ;;
     --slot-timeout) SLOT_TIMEOUT="$2"; shift ;;
     --no-build) BUILD=0 ;;
@@ -91,10 +102,12 @@ while (( $# )); do
   shift
 done
 
+AGENT_URL="${AGENT_URL:-http://127.0.0.1:$PORT/predict}"
 STAGE="$(mktemp -d "${TMPDIR:-/tmp}/$PREFIX-stage.XXXXXX")"
 EXPORT="$STAGE/run"   # shared read-only as "run"
 mkdir -p "$EXPORT"
 TART_PID=""
+LEASE_ID=""
 T0=$SECONDS
 typeset -A T   # phase timings, seconds
 
@@ -102,6 +115,10 @@ cleanup() {
   local rc=$?
   trap - EXIT INT TERM
   log "Cleaning up (exit $rc)"
+  if [[ -n "${LEASE_ID:-}" ]]; then
+    tart-lease release --id "$LEASE_ID" 2>/dev/null || true
+    LEASE_ID=""
+  fi
   tart stop "$CLONE" >/dev/null 2>&1 || true
   [[ -n "$TART_PID" ]] && kill "$TART_PID" 2>/dev/null || true
   tart delete "$CLONE" >/dev/null 2>&1 || true
@@ -116,6 +133,7 @@ trap 'exit 130' INT TERM
 command -v tart >/dev/null || fail "Tart is not installed (brew install cirruslabs/cli/tart)"
 [[ -e "$SERVER" ]] || fail "Agent server not found: $SERVER"
 [[ -z "$MODEL_DIR" || -d "$MODEL_DIR" ]] || fail "Model folder not found: $MODEL_DIR"
+[[ -z "$VERIFY" || -f "$VERIFY" ]] || fail "Verify file not found: $VERIFY"
 
 # Not grep -q: it exits at the first match, and under pipefail the SIGPIPE to tart fails the test.
 vm_exists() { tart list --quiet 2>/dev/null | grep -x -- "$1" >/dev/null; }
@@ -153,7 +171,16 @@ ditto -c -k --keepParent "$APP" "$EXPORT/app.zip"
 mkdir -p "$EXPORT/server"
 if [[ -d "$SERVER" ]]; then cp -R "$SERVER/." "$EXPORT/server/"; else cp "$SERVER" "$EXPORT/server/"; fi
 cp "$REPO/scripts/vm-guest-play.py" "$EXPORT/"
-print -r -- "{\"agent\": \"custom\", \"url\": \"http://127.0.0.1:$PORT/predict\", \"batch\": $BATCH, \"inputRate\": $INPUT_RATE}" \
+# Settings' "Test connection" (App.TestAgent) and one decision per game, run in the guest against
+# the agent by testagent_test.go; the guest has no Go, so the test binary is built here.
+(cd "$REPO" && GOOS=darwin GOARCH=arm64 go test -c -o "$EXPORT/system1.test" .) >>"$EXPORT/build.log" 2>&1 \
+  || { tail -20 "$EXPORT/build.log" >&2; fail "Building the test binary failed"; }
+PLAY_ARGS="--agent-url $AGENT_URL --server-pid-file $GUEST_RESULTS/server.pid"
+if [[ -n "$VERIFY" ]]; then
+  cp "$VERIFY" "$EXPORT/verify.jsonl"
+  PLAY_ARGS+=" --verify '$SHARE/run/verify.jsonl' --verify-every $VERIFY_EVERY"
+fi
+print -r -- "{\"agent\": \"custom\", \"url\": \"$AGENT_URL\", \"batch\": $BATCH, \"inputRate\": $INPUT_RATE}" \
   > "$EXPORT/settings.json"
 print -r -- "$SERVER_CMD" > "$EXPORT/server-cmd"
 
@@ -174,28 +201,22 @@ T[stage]=$(( SECONDS - phase - T[build] ))
 
 # --- Wait for a VM slot, clone and boot -----------------------------------------
 
-running_macos_vms() {
-  local n=0 name os
-  for name in $(tart list --format json | /usr/bin/python3 -c 'import json,sys; [print(v["Name"]) for v in json.load(sys.stdin) if v["Running"]]'); do
-    os="$(tart get "$name" --format json 2>/dev/null | /usr/bin/python3 -c 'import json,sys; print(json.load(sys.stdin).get("OS",""))' 2>/dev/null || true)"
-    [[ "$os" == "linux" ]] || n=$(( n + 1 ))   # count unknowns as macOS, to be safe
-  done
-  print -r -- $n
-}
-
 phase=$SECONDS
 booted=0
 until (( booted )); do
+  # Slot admission is tart-lease's job now. The loop this replaced counted
+  # running VMs itself, which raced: two waiters polling on the same cycle
+  # could both see a free slot and both start. tart-lease decides under a
+  # lock, and also gates on memory rather than a bare count.
+  # See Homelab protocols/tart-lease/PROTOCOL.md
   wait_start=$SECONDS
-  announced=0
-  while (( $(running_macos_vms) >= MAX_MACOS_VMS )); do
-    if (( ! announced )); then
-      log "Waiting for a free macOS VM slot (Apple allows $MAX_MACOS_VMS; running now: $(tart list | awk '$NF == "running" { printf "%s ", $2 }'))"
-      announced=1
-    fi
-    (( SECONDS - wait_start < SLOT_TIMEOUT )) || fail "No free VM slot after ${SLOT_TIMEOUT}s. Other projects' VMs are still running; try again later or raise --slot-timeout."
-    sleep 15
-  done
+  if command -v tart-lease >/dev/null; then
+    LEASE_ID=$(TART_LEASE_MAX_SLOTS="$MAX_MACOS_VMS" \
+      tart-lease acquire --label system1 --pid $$ --timeout "$SLOT_TIMEOUT") \
+      || fail "No free VM slot after ${SLOT_TIMEOUT}s. Other projects' VMs are still running; try again later or raise --slot-timeout."
+  else
+    log "WARNING: tart-lease not on PATH — running without admission control"
+  fi
   T[slot_wait]=$(( ${T[slot_wait]:-0} + SECONDS - wait_start ))
 
   step=$SECONDS
@@ -250,21 +271,29 @@ gx "cd ~/server && export PORT=$PORT MODEL_DIR=${(q)GUEST_MODEL_DIR}
   echo \$! > $GUEST_RESULTS/server.pid"
 
 deadline=$(( SECONDS + SERVER_TIMEOUT ))
-until [[ "$(gx "curl -s -o /dev/null -w '%{http_code}' -m 2 http://127.0.0.1:$PORT/predict" 2>/dev/null || true)" =~ '^[1-5][0-9][0-9]$' ]]; do
+until [[ "$(gx "curl -s -o /dev/null -w '%{http_code}' -m 2 $AGENT_URL" 2>/dev/null || true)" =~ '^[1-5][0-9][0-9]$' ]]; do
   if ! gx "kill -0 \$(cat $GUEST_RESULTS/server.pid)" >/dev/null 2>&1; then
     gx "tail -20 $GUEST_RESULTS/server.log" >&2 || true
     fail "The agent server exited during startup (log above)"
   fi
-  (( SECONDS < deadline )) || fail "The agent server did not answer on port $PORT within ${SERVER_TIMEOUT}s"
+  (( SECONDS < deadline )) || fail "The agent did not answer at $AGENT_URL within ${SERVER_TIMEOUT}s"
   sleep 2
 done
 T[server_start]=$(( SECONDS - phase ))
 log "Agent server answering after ${T[server_start]}s"
 
+log "Test connection (App.TestAgent) and one decision per game, from the guest"
+if gx "cd $GUEST_RESULTS && SYSTEM1_TEST_AGENT_URL=$AGENT_URL '$SHARE/run/system1.test' -test.run 'TestAgentLive\$' -test.v > testagent.log 2>&1"; then
+  gx "grep -E 'Connected|answers in' $GUEST_RESULTS/testagent.log" | sed 's/^ */    /'
+else
+  gx "tail -20 $GUEST_RESULTS/testagent.log" >&2 || true
+  log "Test connection FAILED (see testagent.log)"
+fi
+
 phase=$SECONDS
 log "Playing games=$GAMES seeds=$SEEDS cap=${CAP}s"
 set +e
-gx "/usr/bin/python3 '$SHARE/run/vm-guest-play.py' --games ${(q)GAMES} --seeds ${(q)SEEDS} --cap $CAP --results $GUEST_RESULTS"
+gx "/usr/bin/python3 '$SHARE/run/vm-guest-play.py' --games ${(q)GAMES} --seeds ${(q)SEEDS} --cap $CAP --results $GUEST_RESULTS $PLAY_ARGS"
 play_rc=$?
 set -e
 T[play]=$(( SECONDS - phase ))
@@ -290,19 +319,42 @@ import os
 rows = [json.loads(l) for l in open(sys.argv[1]) if l.strip()] if os.path.exists(sys.argv[1]) else []
 if not rows:
     print('no results')
-print(f"{'game':<9} {'seed':>5} {'score':>7} {'level':>5} {'lives':>5} {'ended':<6} {'game s':>7} {'wall s':>7} {'tick/s':>6} {'1st ans s':>9}")
+print(f"{'game':<9} {'seed':>5} {'score':>7} {'level':>5} {'lives':>5} {'ended':<6} {'game s':>7} {'wall s':>7} {'tick/s':>6} {'1st ans s':>9} {'ans/s':>7} {'calls':>6} {'srv MB':>7}")
 for r in rows:
     if "error" in r:
         print(f"{r['game']:<9} {r['seed']:>5}  ERROR: {r['error']}")
         continue
     print(f"{r['game']:<9} {r['seed']:>5} {r['score']:>7} {r['level']:>5} {r['lives']:>5} {r['ended']:<6} "
-          f"{r['game_secs']:>7} {r['wall_secs']:>7} {str(r.get('ticks_per_sec')):>6} {str(r['first_answer_secs']):>9}")
+          f"{r['game_secs']:>7} {r['wall_secs']:>7} {str(r.get('ticks_per_sec')):>6} {str(r['first_answer_secs']):>9} "
+          f"{str(r.get('answers_per_sec', '-')):>7} {str(r.get('model_calls', '-')):>6} {str(r.get('server_rss_mb', '-')):>7}")
 by = {}
 for r in rows:
     if "error" not in r:
         by.setdefault(r["game"], []).append(r["score"])
 for g, s in by.items():
     print(f"{g}: {len(s)} game(s), mean score {sum(s) / len(s):.1f}, best {max(s)}")
+d = os.path.dirname(sys.argv[1])
+vp = os.path.join(d, "verify.jsonl")
+if os.path.exists(vp):
+    vs = [json.loads(l) for l in open(vp) if l.strip()]
+    for phase in ("during", "after"):
+        v = [x for x in vs if x["phase"] == phase]
+        if v:
+            ms = sorted(x["ms"] for x in v)
+            print(f"verify {phase} play: {sum(x['ok'] for x in v)}/{len(v)} agree, {sum(x['exact'] for x in v)} byte-identical, "
+                  f"ms median {ms[len(ms) // 2]} p90 {ms[int(len(ms) * 0.9)]} max {ms[-1]}")
+mp = os.path.join(d, "monitor.jsonl")
+if os.path.exists(mp):
+    rss = [m["server_rss_mb"] for m in map(json.loads, open(mp)) if m.get("server_rss_mb")]
+    if rss:
+        print(f"server RSS MB: first {rss[0]}, min {min(rss)}, max {max(rss)}, last {rss[-1]} ({len(rss)} samples)")
+import re
+pat = re.compile(r"panic|fatal|goroutine \d+ \[|SIGSEGV|NaN|\b[45]\d\d:|http: |agent error|error", re.I)
+for name in sorted(os.listdir(d)):
+    if name.endswith(".log") and name not in ("build.log", "tart-run.log"):
+        hits = [l.rstrip() for l in open(os.path.join(d, name), errors="replace") if pat.search(l)]
+        if hits:
+            print(f"{name}: {len(hits)} suspicious line(s), first: {hits[0][:200]}")
 EOF
 log "Timings (s): $timings"
 exit $play_rc
