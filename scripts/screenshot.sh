@@ -4,7 +4,7 @@
 # Prints the path of the saved PNG on success.
 set -euo pipefail
 
-BUNDLE_ID="${BUNDLE_ID:-com.wails.system-1-arcade}"
+BUNDLE_ID="${BUNDLE_ID:-co.sstools.System1Arcade}"
 APP_NAME="${APP_NAME:-^System ?1}"  # regex: "System 1 Arcade" (build) or "System1" (wails dev)
 # Seconds to wait after raising the window so WebKit can repaint.
 SETTLE="${SETTLE:-1}"

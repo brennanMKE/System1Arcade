@@ -9,5 +9,12 @@
   "author": {
     "name": "Brennan Stehling",
     "email": "277419+brennanMKE@users.noreply.github.com"
+  },
+  "info": {
+    "companyName": "Brennan Stehling",
+    "productName": "System 1 Arcade",
+    "productVersion": "0.1.0",
+    "copyright": "Copyright © 2026 Brennan Stehling",
+    "comments": "Arcade games played by System 1 decision models"
   }
 }

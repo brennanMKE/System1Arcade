@@ -37,7 +37,7 @@ open "$(scripts/screenshot.sh)"
 ## How it works
 
 1. `windows --json` lists every visible window with its CoreGraphics window ID, bundle ID and app name.
-2. `jq` picks the first window whose bundle ID is `com.wails.system-1-arcade` (the `wails build` app
+2. `jq` picks the first window whose bundle ID is `co.sstools.System1Arcade` (the `wails build` app
    bundle) or whose app name matches `^System ?1` ("System 1 Arcade", or "System1" under `wails dev`). The name match covers `wails dev`, which runs a
    binary outside an app bundle, so that window may have no bundle ID.
 3. It brings the app to the front and waits `SETTLE` seconds (1 by default); see below for why.
@@ -56,7 +56,7 @@ waiting briefly lets WebKit repaint before the capture.
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `BUNDLE_ID` | `com.wails.system-1-arcade` | Bundle ID to match |
+| `BUNDLE_ID` | `co.sstools.System1Arcade` | Bundle ID to match |
 | `APP_NAME` | `^System ?1` | Regular expression the app name must match |
 | `SETTLE` | `1` | Seconds to wait after bringing the app to the front |
 | `ACTIVATE` | `1` | Set to `0` to capture without bringing the app to the front (the capture may be blank) |

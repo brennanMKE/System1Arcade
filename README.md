@@ -29,10 +29,14 @@ question, and the plain-English description it was given ("Model sees").
 - [Connecting a custom agent](docs/custom-agents.md): the endpoint contract, Settings, and
   connecting a standalone Laya server or TypeSafe's Jev
 - [Screenshots](docs/screenshots.md): capturing the app window from scripts
+- [Releasing](docs/releasing.md): the signed, notarized DMG and the GitHub release
 - [UI testing in a Tart VM](docs/ui-testing-vm.md): testing the app window inside a disposable
   macOS VM, never on the Mac in use
 
 ## Quick start
+
+On a Mac, download the DMG from the [latest release](https://github.com/brennanMKE/System1Arcade/releases/latest),
+open it and drag System 1 Arcade to Applications. To build it yourself:
 
 You need Go and Node.js; for the built-in agent, also Python 3. On Linux you need the GTK 3 and
 WebKitGTK development packages (e.g. `libgtk-3-dev libwebkit2gtk-4.1-dev`).

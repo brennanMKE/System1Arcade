@@ -2,24 +2,26 @@
 # Build System 1 Arcade for the current platform (macOS or Linux; on Windows
 # use scripts/build.ps1, or run this from Git Bash).
 #
-# Usage: scripts/build.sh [--agent] [--clean] [--debug] [--test]
-#   --agent  also set up .venv with Laya for the built-in agent
-#   --clean  remove previous build output first
-#   --debug  build with devtools and debug logging
-#   --test   run the Go tests before building
+# Usage: scripts/build.sh [--agent] [--clean] [--debug] [--test] [--universal]
+#   --agent      also set up .venv with Laya for the built-in agent
+#   --clean      remove previous build output first
+#   --debug      build with devtools and debug logging
+#   --test       run the Go tests before building
+#   --universal  macOS only: build for both Apple silicon and Intel
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-AGENT=0 CLEAN=0 DEBUG=0 TEST=0
+AGENT=0 CLEAN=0 DEBUG=0 TEST=0 UNIVERSAL=0
 for arg in "$@"; do
   case "$arg" in
     --agent) AGENT=1 ;;
     --clean) CLEAN=1 ;;
     --debug) DEBUG=1 ;;
     --test) TEST=1 ;;
-    -h|--help) sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    --universal) UNIVERSAL=1 ;;
+    -h|--help) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option: $arg (see --help)" >&2; exit 2 ;;
   esac
 done
@@ -92,8 +94,12 @@ ARGS=()
 [ "$CLEAN" = 1 ] && ARGS+=(-clean)
 [ "$DEBUG" = 1 ] && ARGS+=(-debug)
 [ -n "$TAGS" ] && ARGS+=(-tags "$TAGS")
+if [ "$UNIVERSAL" = 1 ]; then
+  [ "$OS" = darwin ] || die "--universal is for macOS only"
+  ARGS+=(-platform darwin/universal)
+fi
 
-say "Building for $OS/$(go env GOARCH) with Wails $("$WAILS" version 2>/dev/null | grep -Eo 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+say "Building for $OS/$([ "$UNIVERSAL" = 1 ] && echo universal || go env GOARCH) with Wails $("$WAILS" version 2>/dev/null | grep -Eo 'v[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
 "$WAILS" build ${ARGS[@]+"${ARGS[@]}"}
 
 case "$OS" in
