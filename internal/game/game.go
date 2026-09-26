@@ -130,3 +130,27 @@ type Game interface {
 
 // Noop is the do-nothing action every game exposes.
 var Noop = Action{Name: "noop", Description: "do nothing this turn", HoldTicks: 1}
+
+// Sounder is implemented by games that raise sound effects. Sounds returns
+// the names of the sounds raised since the last call and forgets them; the
+// returned slice is only valid until the next Tick. Sounds are presentation
+// only: they never feed Observe, Status or Frame.
+type Sounder interface {
+	Sounds() []string
+}
+
+// SoundQueue implements Sounder. Embed it in a game and call Emit from Tick.
+// It reuses its buffer, so ticks without sound allocate nothing.
+type SoundQueue struct {
+	queued []string
+}
+
+// Emit raises a sound effect by name.
+func (q *SoundQueue) Emit(name string) { q.queued = append(q.queued, name) }
+
+// Sounds returns and clears the queued sounds.
+func (q *SoundQueue) Sounds() []string {
+	out := q.queued
+	q.queued = q.queued[:0]
+	return out
+}

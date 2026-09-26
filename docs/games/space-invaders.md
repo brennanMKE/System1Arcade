@@ -19,6 +19,9 @@ Defend the ground from a marching formation of invaders.
   chew through them. They're rebuilt each wave.
 - **The UFO** crosses the top every 25 seconds and is worth 50, 100, 150 or 300 points.
 - **Lives:** 3. Clearing a wave starts the next one a little lower, with faster bombs.
+- **Sound:** the formation marches to four falling bass notes, one per step, so the beat speeds up
+  as invaders die. Firing, hitting an invader, the UFO's warble and its explosion, losing the
+  cannon, clearing a wave and game over each have their own sound. M turns sound on or off.
 
 ## What the agent is asked
 

@@ -17,6 +17,9 @@ A NES-style falling-block game on a 10×20 board.
 - **Scoring:** 40, 100, 300 or 1,200 points for clearing 1–4 lines at once, times (level + 1), plus
   1 point per soft-dropped row and 2 per hard-dropped row.
 - **Game over:** a new piece has no room to appear, or a piece locks above the top.
+- **Sound:** a tick for each move, a chirp for each rotation, a thud for a hard drop or a lock, a
+  rising arpeggio for 1–3 lines, a longer one for four lines, a fanfare for a new level, and a
+  falling tune at game over. M turns sound on or off.
 
 The game runs at 60 ticks a second and is deterministic: the same seed and inputs always replay the
 same game.

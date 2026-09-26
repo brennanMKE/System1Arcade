@@ -1,6 +1,7 @@
 import './style.css';
 import {Setup, Load, Reset, TogglePause, SetMode, KeyDown, KeyUp, ReleaseAll, StartAgent, StopAgent, AgentStatus, Play, GetSettings, SaveSettings, TestAgent} from '../wailsjs/go/main/App';
 import {EventsOn} from '../wailsjs/runtime/runtime';
+import {soundOn, setSound, unlockAudio, playSounds} from './audio.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('screen');
@@ -20,6 +21,10 @@ const KEYS = {
 
 const overlayOpen = () => !$('launch').hidden || !$('settings').hidden;
 
+// Browsers keep audio suspended until a user gesture; any key or click counts.
+window.addEventListener('keydown', unlockAudio, true);
+window.addEventListener('pointerdown', unlockAudio, true);
+
 window.addEventListener('keydown', (e) => {
   if (!$('settings').hidden) {
     if (e.code === 'Escape') closeSettings();
@@ -31,6 +36,7 @@ window.addEventListener('keydown', (e) => {
   }
   if (e.code === 'KeyP') { TogglePause(); return; }
   if (e.code === 'KeyR') { Reset(); return; }
+  if (e.code === 'KeyM') { toggleSound(); return; }
   const b = KEYS[e.code];
   if (!b) return;
   e.preventDefault();
@@ -57,6 +63,7 @@ async function init() {
   EventsOn('update', (u) => {
     if (games.length && (!info || u.game !== info.id)) selectGame(u.game);
     latest = u;
+    playSounds(u.sounds, u.paused);
   });
   const s = await Setup();
   games = s.games;
@@ -95,6 +102,9 @@ async function init() {
   for (const b of $('mode').children) b.onclick = () => { SetMode(b.dataset.mode); b.blur(); };
   $('pause').onclick = (e) => { TogglePause(); e.currentTarget.blur(); };
   $('reset').onclick = (e) => { Reset(); e.currentTarget.blur(); };
+  $('sound').onclick = (e) => { toggleSound(); e.currentTarget.blur(); };
+  showSound();
+  unlockAudio(); // may stay suspended until the first key or click
   $('agent-toggle').onclick = (e) => {
     e.currentTarget.blur();
     toggleAgent(agentState === 'off' || agentState === 'error');
@@ -106,6 +116,16 @@ async function init() {
 
   window.addEventListener('resize', resize);
   requestAnimationFrame(draw);
+}
+
+function toggleSound() {
+  setSound(!soundOn());
+  showSound();
+}
+function showSound() {
+  const on = soundOn();
+  $('sound').firstChild.textContent = on ? 'Sound: On ' : 'Sound: Off ';
+  $('sound').classList.toggle('on', on);
 }
 
 let settings = {agent: 'builtin'};

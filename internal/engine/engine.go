@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -58,7 +59,14 @@ type Update struct {
 	Agent  *AgentView  `json:"agent,omitempty"`
 	// Situation is what the model is told, for games that describe themselves.
 	Situation string `json:"situation,omitempty"`
+	// Sounds names the sound effects raised since the previous update, each
+	// at most once, oldest first.
+	Sounds []string `json:"sounds,omitempty"`
 }
+
+// maxPendingSounds caps the sounds held between updates, so a lockstep step
+// that runs many ticks does not deliver a burst.
+const maxPendingSounds = 32
 
 type agentEvent struct {
 	action string
@@ -94,6 +102,8 @@ type Engine struct {
 
 	subs    map[int]chan Update
 	nextSub int
+
+	sounds []string // raised since the last update, without repeats
 }
 
 // New creates an engine with the built-in games and loads the first one.
@@ -161,6 +171,10 @@ func (e *Engine) resetLocked(seed int64) {
 	clear(e.prevHeld)
 	e.macro = nil
 	e.sincePress = e.paceGap
+	e.sounds = e.sounds[:0]
+	if s, ok := e.g.(game.Sounder); ok {
+		s.Sounds() // drop anything raised by Reset
+	}
 	e.dirty = true
 }
 
@@ -478,6 +492,7 @@ func (e *Engine) tickLocked() {
 		return
 	}
 	e.g.Tick(game.Input{Held: held, Pressed: pressed})
+	e.collectSoundsLocked()
 	e.tick++
 	e.prevHeld = held
 	for b, n := range e.agentHold {
@@ -491,6 +506,19 @@ func (e *Engine) tickLocked() {
 	e.sincePress++
 	e.pumpMacroLocked()
 	e.dirty = true
+}
+
+// collectSoundsLocked moves the game's new sounds into the pending list.
+func (e *Engine) collectSoundsLocked() {
+	s, ok := e.g.(game.Sounder)
+	if !ok {
+		return
+	}
+	for _, name := range s.Sounds() {
+		if len(e.sounds) < maxPendingSounds && !slices.Contains(e.sounds, name) {
+			e.sounds = append(e.sounds, name)
+		}
+	}
 }
 
 // State returns the agent-facing state.
@@ -602,6 +630,10 @@ func (e *Engine) updateLocked() Update {
 	}
 	if adv, ok := e.g.(game.Advisor); ok {
 		u.Situation = adv.Situation()
+	}
+	if len(e.sounds) > 0 {
+		u.Sounds = slices.Clone(e.sounds)
+		e.sounds = e.sounds[:0]
 	}
 	e.dirty = false
 	return u

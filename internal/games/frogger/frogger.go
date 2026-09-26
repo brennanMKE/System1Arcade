@@ -21,6 +21,7 @@ const (
 	hopCooldown = 8
 	dieTicks    = 50
 	frogTime    = 30 * game.TickRate
+	warnTime    = 10 * game.TickRate // the time bar turns red
 	startLives  = 3
 )
 
@@ -96,6 +97,8 @@ type Frogger struct {
 	facing game.Button
 	delay  int // ticks until the agent's next press can happen
 	gap    int // minimum ticks between the agent's presses
+
+	game.SoundQueue
 }
 
 func New() *Frogger { f := &Frogger{}; f.Reset(1); return f }
@@ -151,8 +154,10 @@ func (f *Frogger) respawn() {
 	f.facing = game.Up
 }
 
-func (f *Frogger) die() {
+// die starts the death animation; sound names how the frog died.
+func (f *Frogger) die(sound string) {
 	f.dying = dieTicks
+	f.Emit(sound)
 }
 
 func (f *Frogger) Tick(in game.Input) {
@@ -176,6 +181,7 @@ func (f *Frogger) Tick(in game.Input) {
 			f.lives--
 			if f.lives <= 0 {
 				f.over = true
+				f.Emit("gameover")
 				return
 			}
 			f.respawn()
@@ -183,8 +189,11 @@ func (f *Frogger) Tick(in game.Input) {
 		return
 	}
 	f.timer--
+	if f.timer == warnTime {
+		f.Emit("hurry")
+	}
 	if f.timer <= 0 {
-		f.die()
+		f.die("timeout")
 		return
 	}
 	if f.hopCD > 0 {
@@ -209,6 +218,7 @@ func (f *Frogger) Tick(in game.Input) {
 func (f *Frogger) hop(b game.Button) {
 	f.facing = b
 	f.hopCD = hopCooldown
+	f.Emit("hop")
 	switch b {
 	case game.Up:
 		f.frow--
@@ -245,12 +255,15 @@ func (f *Frogger) reachHome() {
 				f.level++
 				f.homes = [5]bool{}
 				f.setupLanes()
+				f.Emit("level")
+			} else {
+				f.Emit("home")
 			}
 			f.respawn()
 			return
 		}
 	}
-	f.die() // hit the bank or an occupied home
+	f.die("squash") // hit the bank or an occupied home
 }
 
 func (f *Frogger) col() int { return int(math.Floor((f.fx + cell/2) / cell)) }
@@ -263,12 +276,12 @@ func (f *Frogger) checkCollision() {
 	switch l.spec.kind {
 	case road:
 		if l.covers(f.fx+6, f.fx+cell-6) {
-			f.die()
+			f.die("squash")
 		}
 	case river:
 		c := f.fx + cell/2
 		if !l.covers(c-2, c+2) || f.fx < -cell/2 || f.fx > float64(width-cell/2) {
-			f.die()
+			f.die("splash")
 		}
 	}
 }
@@ -344,7 +357,7 @@ func (f *Frogger) Frame() game.Frame {
 	}
 	tw := float64(160) * float64(f.timer) / frogTime
 	tc := "#3de25b"
-	if f.timer < 10*game.TickRate {
+	if f.timer < warnTime {
 		tc = "#ff5040"
 	}
 	R(width-8-tw, by+12, tw, 10, tc)

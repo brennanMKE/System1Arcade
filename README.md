@@ -63,7 +63,10 @@ because loading the model takes a few seconds.
 <img src="docs/images/launch.png" alt="Start screen: choose the game and who plays, then Start" width="560">
 
 Keys: arrows or WASD to move, ↑ to rotate or hop, Z to rotate back, Space or X to fire or hard drop,
-Enter to restart after a game over, P to pause, R to restart.
+Enter to restart after a game over, P to pause, R to restart, M to turn sound on or off.
+
+Each game has retro sound effects, made in the app with the Web Audio API. Sound is on by default;
+the **Sound** button or M turns it off, and the app remembers the choice.
 
 ## How an agent plays
 

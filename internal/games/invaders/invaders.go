@@ -32,6 +32,12 @@ const (
 
 var shieldXs = []int{32, 77, 122, 167}
 
+// marchNotes are the four descending bass notes the formation steps to.
+var marchNotes = [4]string{"march1", "march2", "march3", "march4"}
+
+// ufoBeat is how often, in ticks, the mystery ship's warble repeats.
+const ufoBeat = 12
+
 type invType struct {
 	sprite string
 	w, off int
@@ -90,6 +96,9 @@ type Invaders struct {
 	ticks int
 	delay int // ticks until the agent's next press can happen
 	gap   int // minimum ticks between the agent's presses
+
+	marchNote int // which of the four march notes plays next
+	game.SoundQueue
 }
 
 func New() *Invaders { g := &Invaders{}; g.Reset(1); return g }
@@ -199,6 +208,7 @@ func (g *Invaders) Tick(in game.Input) {
 			g.lives--
 			if g.lives <= 0 {
 				g.over = true
+				g.Emit("gameover")
 			}
 			g.px = margin + 16
 		}
@@ -213,6 +223,7 @@ func (g *Invaders) Tick(in game.Input) {
 	}
 	if in.Hit(game.A) && !g.shot.on {
 		g.shot = bullet{x: g.px + 6, y: playerY - 4, on: true}
+		g.Emit("shoot")
 	}
 
 	g.moveShot()
@@ -223,6 +234,7 @@ func (g *Invaders) Tick(in game.Input) {
 	if g.aliveCount() == 0 {
 		g.level++
 		g.newWave()
+		g.Emit("wave")
 	}
 }
 
@@ -262,6 +274,7 @@ func (g *Invaders) moveShot() {
 					g.alive[r][c] = false
 					g.shot.on = false
 					g.score += rowTypes[r].points
+					g.Emit("invader")
 					g.booms = append(g.booms, boom{float64(ix + w/2 - 6), float64(iy), 14, "explode", rowTypes[r].color})
 					return
 				}
@@ -274,6 +287,7 @@ func (g *Invaders) moveShot() {
 			g.score += g.ufoScore
 			g.ufoScoreT = 60
 			g.ufoScoreX = g.ufoX
+			g.Emit("ufo_hit")
 			return
 		}
 	}
@@ -287,6 +301,8 @@ func (g *Invaders) moveFormation() {
 	}
 	g.stepT = 0
 	g.anim ^= 1
+	g.Emit(marchNotes[g.marchNote])
+	g.marchNote = (g.marchNote + 1) % len(marchNotes)
 	minX, maxX, _ := g.bounds()
 	if g.dir > 0 && maxX+2 > width-margin || g.dir < 0 && minX-2 < margin {
 		g.fy += 8
@@ -312,6 +328,7 @@ func (g *Invaders) moveFormation() {
 	if bottom >= playerY {
 		g.lives = 0
 		g.over = true
+		g.Emit("gameover")
 	}
 }
 
@@ -393,11 +410,14 @@ func (g *Invaders) moveUFO() {
 	g.ufoX += g.ufoDir
 	if g.ufoX < -16 || g.ufoX > width {
 		g.ufoOn = false
+	} else if g.ticks%ufoBeat == 0 {
+		g.Emit("ufo")
 	}
 }
 
 func (g *Invaders) killPlayer() {
 	g.dying = dieTicks
+	g.Emit("player_die")
 	g.bombs = nil
 	g.shot.on = false
 	g.booms = append(g.booms, boom{g.px, playerY, dieTicks, "playerboom", "#7dff6a"})

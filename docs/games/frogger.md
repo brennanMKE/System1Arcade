@@ -21,6 +21,10 @@ Guide the frog across a road and a river into the five homes at the top.
 - **Scoring:** 10 points for each row closer to the homes than the frog has been this life; 50
   points plus 10 per second left for reaching a home. Filling all five homes scores 1,000, starts
   the next level, where every lane moves faster (by 15% of its starting speed per level).
+- **Sound:** a blip for each hop, a short tune for reaching a home and a longer one for filling all
+  five, a squash for a vehicle or the bank, a splash for the water, a double beep when 10 seconds
+  are left, a falling tone when time runs out, and a falling tune at game over. M turns sound on
+  or off.
 
 ## What the agent is asked
 

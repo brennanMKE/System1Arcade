@@ -99,6 +99,8 @@ type Tetris struct {
 	pieces  int // pieces spawned so far
 	planned int // piece number the current plan is for
 	asked   asked
+
+	game.SoundQueue
 }
 
 func New() *Tetris { t := &Tetris{}; t.Reset(1); return t }
@@ -151,6 +153,7 @@ func (t *Tetris) spawn() {
 	t.pieces++
 	if !t.fits(t.cur) {
 		t.over = true
+		t.Emit("gameover")
 	}
 }
 
@@ -175,7 +178,7 @@ func (t *Tetris) try(p piece) bool {
 	return false
 }
 
-func (t *Tetris) rotate(dir int) {
+func (t *Tetris) rotate(dir int) bool {
 	p := t.cur
 	p.rot = (p.rot + dir + 4) % 4
 	for _, k := range []pt{{0, 0}, {-1, 0}, {1, 0}, {-2, 0}, {2, 0}, {0, -1}} {
@@ -183,9 +186,10 @@ func (t *Tetris) rotate(dir int) {
 		q.x += k.x
 		q.y += k.y
 		if t.try(q) {
-			return
+			return true
 		}
 	}
+	return false
 }
 
 func (t *Tetris) lock() {
@@ -193,6 +197,7 @@ func (t *Tetris) lock() {
 		x, y := t.cur.x+c.x, t.cur.y+c.y
 		if y < 0 {
 			t.over = true
+			t.Emit("gameover")
 			return
 		}
 		t.board[y][x] = t.cur.kind + 1
@@ -215,7 +220,17 @@ func (t *Tetris) lock() {
 	}
 	t.score += []int{0, 40, 100, 300, 1200}[cleared] * (t.level + 1)
 	t.lines += cleared
-	t.level = t.lines / 10
+	level := t.lines / 10
+	switch {
+	case cleared == 4:
+		t.Emit("tetris")
+	case cleared > 0:
+		t.Emit("line")
+	}
+	if level > t.level {
+		t.Emit("levelup")
+	}
+	t.level = level
 	t.spawn()
 }
 
@@ -226,6 +241,7 @@ func (t *Tetris) stepDown() bool {
 	if t.try(p) {
 		return true
 	}
+	t.Emit("lock")
 	t.lock()
 	return false
 }
@@ -254,22 +270,25 @@ func (t *Tetris) Tick(in game.Input) {
 		if in.Hit(b) || *das >= dasDelay && (*das-dasDelay)%dasRepeat == 0 {
 			p := t.cur
 			p.x += dx
-			t.try(p)
+			if t.try(p) {
+				t.Emit("move")
+			}
 		}
 		*das++
 	}
 	shift(game.Left, &t.dasLeft, -1)
 	shift(game.Right, &t.dasRight, 1)
-	if in.Hit(game.Up) {
-		t.rotate(1)
+	if in.Hit(game.Up) && t.rotate(1) {
+		t.Emit("rotate")
 	}
-	if in.Hit(game.B) {
-		t.rotate(-1)
+	if in.Hit(game.B) && t.rotate(-1) {
+		t.Emit("rotate")
 	}
 	if in.Hit(game.A) {
 		d := t.dropDistance()
 		t.cur.y += d
 		t.score += 2 * d
+		t.Emit("drop")
 		t.lock()
 		return
 	}
