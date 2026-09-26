@@ -3,6 +3,17 @@
 Release notes for each version. `scripts/publish-release.sh` uses the section for the version
 being released.
 
+## 0.1.1
+
+Sound for every game.
+
+- **Sound effects** in Tetris, Frogger and Space Invaders: moves, line clears, hops, splashes,
+  shots, the invaders' four-note march that speeds up as they do, and more. Sound is on by
+  default; turn it off with the Sound button or the M key, and the app remembers your choice.
+- **Autostart for testing:** set `SYSTEM1_AUTOSTART=<game>[:<seed>]` to start the agent at launch
+  without pressing Start.
+- The app now logs agent errors, not only the latest one in the side panel.
+
 ## 0.1.0
 
 The first release: Tetris, Frogger and Space Invaders, played by you or by a System 1 model.
