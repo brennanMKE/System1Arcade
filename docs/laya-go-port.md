@@ -851,6 +851,14 @@ Each phase ends with something testable. Durations are rough, for one person.
 
 ## Adopting it in System 1 Arcade
 
+**Status (2026-09-26): the final step is done.** The built-in agent runs laya-go in the app's
+process (`internal/agent/local.go`); the Python server and its setup are gone from the app. See
+[Laya performance](laya-performance.md#the-built-in-agent-in-go) for the parity check and the
+scores. Played headless at the default settings, its scores match the Python/MPS server's
+(Frogger game for game). One open question: in the built app, Frogger seed 1 scored far lower with
+the built-in agent than with the Python/MPS server as a custom agent; that needs more in-app runs
+before deciding whether macOS should keep the Python/MPS server as the default.
+
 **Interim step: no Go changes to the agent loop.** Ship `laya-server` inside the app and have
 `agentManager.launchServer` start it instead of Python. It prints the same `agent ready` line. This
 removes Python right away with a small diff in `agent.go`:

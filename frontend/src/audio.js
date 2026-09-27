@@ -9,13 +9,27 @@ const MAX_PER_UPDATE = 4;
 let enabled = true;
 try { enabled = localStorage.getItem(STORE_KEY) !== 'off'; } catch {}
 
+// SYSTEM1_SOUND=off (Setup's soundOff) silences a session, such as an
+// automated test run, without touching the saved preference. No
+// AudioContext is created before Setup says whether sound is allowed.
+let ready = false;
+let forcedOff = false;
+
 let ac = null;      // AudioContext, created only while sound is on
 let out = null;     // master gain
 let noiseBuf = null;
 
-export const soundOn = () => enabled;
+export const soundOn = () => enabled && !forcedOff;
+
+// allowAudio is called once Setup has answered: soundOff forces sound off
+// for this session only.
+export function allowAudio(soundOff) {
+  forcedOff = !!soundOff;
+  ready = true;
+}
 
 export function setSound(on) {
+  if (forcedOff) return; // muted for this session by SYSTEM1_SOUND=off
   enabled = !!on;
   try { localStorage.setItem(STORE_KEY, enabled ? 'on' : 'off'); } catch {}
   if (enabled) unlockAudio();
@@ -26,7 +40,7 @@ export function setSound(on) {
 // suspended until a user gesture, so it is also called from key and pointer
 // handlers.
 export function unlockAudio() {
-  if (!enabled) return;
+  if (!enabled || !ready || forcedOff) return;
   if (!ac) {
     const AC = window.AudioContext || window.webkitAudioContext;
     if (!AC) return;

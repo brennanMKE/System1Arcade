@@ -13,6 +13,7 @@
 #      the export (and optionally a model folder) shared read-only.
 #   4. In the guest: install the app, write settings.json (custom agent, batch on), start the agent
 #      server, then for each game and seed launch the app with SYSTEM1_AUTOSTART=<game>:<seed>
+#      and SYSTEM1_SOUND=off (muted)
 #      and poll /v1/state until game over or the time cap (scripts/vm-guest-play.py).
 #   5. Pull results.jsonl and the logs back to build/agent-vm/<run-id>/, print a summary.
 #   6. Cleanup on EXIT: stop and delete the clone, remove the export.

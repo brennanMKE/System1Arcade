@@ -3,19 +3,20 @@
   Build System 1 Arcade on Windows.
 
 .EXAMPLE
-  powershell -ExecutionPolicy Bypass -File scripts\build.ps1 -Agent -Test
+  powershell -ExecutionPolicy Bypass -File scripts\build.ps1 -Test
 
-.PARAMETER Agent
-  Also set up .venv with Laya for the built-in agent.
 .PARAMETER Clean
   Remove previous build output first.
 .PARAMETER DebugBuild
   Build with devtools and debug logging.
 .PARAMETER Test
   Run the Go tests before building.
+.PARAMETER PythonTools
+  Also set up .venv with Python Laya for the development tools in agents\.
+  The app doesn't need Python: its built-in agent runs Laya in Go.
 #>
 param(
-  [switch]$Agent,
+  [Alias('Agent')][switch]$PythonTools,
   [switch]$Clean,
   [switch]$DebugBuild,
   [switch]$Test
@@ -52,17 +53,17 @@ if ($Test) {
   if ($LASTEXITCODE) { Die 'tests failed' }
 }
 
-if ($Agent) {
+if ($PythonTools) {
   $Py = (Get-Command python -ErrorAction SilentlyContinue).Source
   if (-not $Py) { $Py = (Get-Command py -ErrorAction SilentlyContinue).Source }
-  if (-not $Py) { Die 'Python 3 is required for the built-in agent' }
+  if (-not $Py) { Die 'Python 3 is required for the Python tools' }
   $VenvPy = Join-Path $Root '.venv\Scripts\python.exe'
   if (-not (Test-Path $VenvPy)) {
     Say 'Creating .venv'
     & $Py -m venv .venv
     if ($LASTEXITCODE) { Die 'could not create .venv' }
   }
-  Say 'Installing Laya into .venv (the model downloads on first use)'
+  Say 'Installing Laya into .venv for agents\*.py (the model downloads on first use)'
   & $VenvPy -m pip install --quiet --upgrade pip
   & $VenvPy -m pip install --quiet laya
   if ($LASTEXITCODE) { Die 'could not install laya' }

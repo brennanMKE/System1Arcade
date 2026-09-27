@@ -1,12 +1,16 @@
 module system1
 
-go 1.25.0
+go 1.27.1
 
-require github.com/wailsapp/wails/v2 v2.16.0
+require (
+	github.com/brennanMKE/laya-go v0.0.0-20260924025419-ec1ddd43ef43
+	github.com/wailsapp/wails/v2 v2.16.0
+)
 
 require (
 	git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3 // indirect
 	github.com/bep/debounce v1.2.1 // indirect
+	github.com/ebitengine/purego v0.11.1 // indirect
 	github.com/go-ole/go-ole v1.3.0 // indirect
 	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
@@ -32,7 +36,7 @@ require (
 	golang.org/x/crypto v0.53.0 // indirect
 	golang.org/x/net v0.56.0 // indirect
 	golang.org/x/sys v0.46.0 // indirect
-	golang.org/x/text v0.39.0 // indirect
+	golang.org/x/text v0.42.0 // indirect
 )
 
 // replace github.com/wailsapp/wails/v2 v2.16.0 => /Users/brennan/go/pkg/mod

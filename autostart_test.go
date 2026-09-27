@@ -87,3 +87,15 @@ func TestAutostartStartsCustomAgent(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 }
+
+// TestSoundOff checks that SYSTEM1_SOUND=off reaches the UI through Setup.
+func TestSoundOff(t *testing.T) {
+	a := &App{engine: engine.New()}
+	if a.Setup().SoundOff {
+		t.Error("sound off without SYSTEM1_SOUND")
+	}
+	t.Setenv(SoundEnv, "off")
+	if !a.Setup().SoundOff {
+		t.Error("SYSTEM1_SOUND=off did not reach Setup")
+	}
+}

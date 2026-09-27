@@ -207,6 +207,7 @@ def play(args, game, seed, log_dir, watcher):
     launched = time.monotonic()
     subprocess.run(["open", "-n", "-a", args.app,
                     "--env", f"SYSTEM1_AUTOSTART={game}:{seed}",
+                    "--env", "SYSTEM1_SOUND=off",
                     "--stdout", log, "--stderr", log], check=True)
 
     # Wait for the app's API, on the right game and seed.

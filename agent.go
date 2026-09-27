@@ -1,20 +1,17 @@
 package main
 
 import (
-	"bufio"
 	"context"
-	"embed"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"runtime"
-	"strings"
 	"sync"
 	"time"
+
+	laya "github.com/brennanMKE/laya-go"
+	"github.com/brennanMKE/laya-go/hub"
 
 	"system1/internal/agent"
 	"system1/internal/engine"
@@ -23,7 +20,7 @@ import (
 
 // Settings choose which agent plays when the user asks for one.
 type Settings struct {
-	// Agent is "builtin" (Laya, run locally by the app) or "custom".
+	// Agent is "builtin" (Laya, run inside the app) or "custom".
 	Agent string `json:"agent"`
 	// URL of a custom agent's decision endpoint.
 	URL string `json:"url"`
@@ -81,14 +78,15 @@ type AgentStatus struct {
 	Kind   string `json:"kind"` // builtin or custom
 }
 
-// agentManager runs one agent at a time: the built-in Laya server as a child
-// process plus the decision loop, or just the loop against a custom URL.
+// agentManager runs one agent at a time: the built-in agent, Laya loaded
+// into this process with laya-go, or a custom agent at a URL. Either way the
+// decision loop is agent.Run.
 type agentManager struct {
 	mu     sync.Mutex
 	status AgentStatus
 	cancel context.CancelFunc
-	server *exec.Cmd
-	done   chan struct{} // closed when the server process exits
+	done   chan struct{} // closed once the running agent has stopped and freed its model
+	local  *agent.Local  // the built-in agent's model while it's loaded
 }
 
 func (m *agentManager) get() AgentStatus {
@@ -103,8 +101,9 @@ func (m *agentManager) get() AgentStatus {
 func (m *agentManager) start(parent context.Context, e *engine.Engine, s Settings) {
 	m.stop()
 	ctx, cancel := context.WithCancel(parent)
+	done := make(chan struct{})
 	m.mu.Lock()
-	m.cancel = cancel
+	m.cancel, m.done = cancel, done
 	m.status = AgentStatus{State: "starting", Kind: s.Agent}
 	m.mu.Unlock()
 	e.SetPaused(true) // nothing moves until the agent answers
@@ -121,47 +120,102 @@ func (m *agentManager) start(parent context.Context, e *engine.Engine, s Setting
 		}
 	}
 	go func() {
-		client := &agent.Client{URL: s.URL, APIKey: s.APIKey, Model: s.Model, Batch: s.Batch}
+		defer close(done)
+		// Keep App Nap away while the agent plays, even with the window
+		// hidden: it would slow the agent's decisions but not the game.
+		defer beginActivity("An agent is playing")()
+		var asker agent.Asker = &agent.Client{URL: s.URL, APIKey: s.APIKey, Model: s.Model, Batch: s.Batch}
 		if s.Agent != "custom" {
-			url, err := m.launchServer(ctx, set)
+			local, err := loadLaya(ctx, set)
 			if err != nil {
-				set("error", err.Error())
+				if ctx.Err() == nil {
+					set("error", err.Error())
+				}
 				return
 			}
-			client = &agent.Client{URL: url, Batch: true}
+			defer func() {
+				m.mu.Lock()
+				if m.local == local {
+					m.local = nil
+				}
+				m.mu.Unlock()
+				local.Close() // waits for a forward pass in progress
+			}()
+			m.mu.Lock()
+			m.local = local
+			m.mu.Unlock()
+			asker = local
 		}
-		agent.Run(ctx, e, client, set)
+		agent.Run(ctx, e, asker, set)
 	}()
 }
 
+// stop stops the agent and waits until the built-in agent has freed its
+// model, so a restart never holds two copies.
 func (m *agentManager) stop() {
 	m.mu.Lock()
-	cancel, cmd, done := m.cancel, m.server, m.done
-	m.cancel, m.server, m.status = nil, nil, AgentStatus{State: "off"}
+	cancel, done := m.cancel, m.done
+	m.cancel, m.done, m.status = nil, nil, AgentStatus{State: "off"}
 	m.mu.Unlock()
 	if cancel != nil {
 		cancel()
 	}
-	if cmd == nil {
-		return
-	}
-	if runtime.GOOS == "windows" {
-		cmd.Process.Kill()
-	} else {
-		cmd.Process.Signal(os.Interrupt)
-	}
-	select {
-	case <-done:
-	case <-time.After(2 * time.Second):
-		cmd.Process.Kill()
+	if done != nil {
+		<-done
 	}
 }
 
-// Embedded so the built-in agent works wherever the app is installed, not
-// only from the project folder.
-//
-//go:embed agents/laya_server.py agents/laya_batch.py
-var agentScripts embed.FS
+// loadLaya loads the built-in agent's model: from the Hugging Face cache, or
+// downloaded into it on first use, reporting progress through set.
+// SYSTEM1_LAYA_MODEL, as for agents/laya_server.py, names another checkpoint:
+// a local directory or a Hugging Face repo.
+func loadLaya(ctx context.Context, set agent.Status) (*agent.Local, error) {
+	set("starting", "Loading the Laya model…")
+	opts := laya.Options{Progress: func(p hub.Progress) {
+		if p.Total > 0 && p.Done >= p.Total {
+			set("starting", "Loading the Laya model…")
+			return
+		}
+		set("starting", fmt.Sprintf("Downloading the Laya model (%d of %d MB)…", p.Done>>20, (p.Total+1<<19)>>20))
+	}}
+	if v := os.Getenv("SYSTEM1_LAYA_MODEL"); v != "" {
+		if st, err := os.Stat(v); err == nil && st.IsDir() {
+			opts.Dir = v
+		} else {
+			opts.Repo, opts.Revision = v, "main"
+		}
+	}
+	start := time.Now()
+	local, err := agent.LoadLocal(ctx, opts)
+	if err != nil {
+		return nil, fmt.Errorf("could not load the Laya model: %w", err)
+	}
+	log.Printf("built-in agent: Laya loaded in %v", time.Since(start).Round(time.Millisecond))
+	return local, nil
+}
+
+// testBuiltin describes the built-in agent for Settings' "Test connection":
+// it asks the loaded model the test question when the agent is running, and
+// otherwise says whether the model still has to be downloaded.
+func (m *agentManager) testBuiltin(ctx context.Context) (string, error) {
+	m.mu.Lock()
+	local := m.local
+	m.mu.Unlock()
+	if local != nil {
+		start := time.Now()
+		msg, err := local.Test(ctx)
+		if err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("Laya is running in the app: %s in %d ms.", msg, time.Since(start).Milliseconds()), nil
+	}
+	if os.Getenv("SYSTEM1_LAYA_MODEL") == "" {
+		if _, err := hub.Find(hub.Options{}); err != nil {
+			return "The built-in agent runs Laya inside the app. Press Start to download the model (about 800 MB, first time only).", nil
+		}
+	}
+	return "The built-in agent runs Laya inside the app. The model is downloaded; it loads when you press Start.", nil
+}
 
 func supportDir() string {
 	dir, err := os.UserConfigDir()
@@ -169,222 +223,4 @@ func supportDir() string {
 		dir = os.TempDir()
 	}
 	return filepath.Join(dir, "System 1 Arcade")
-}
-
-// installScripts writes the embedded agent scripts to dir.
-func installScripts(dir string) error {
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return err
-	}
-	for _, name := range []string{"laya_server.py", "laya_batch.py"} {
-		b, err := agentScripts.ReadFile("agents/" + name)
-		if err != nil {
-			return err
-		}
-		if err := os.WriteFile(filepath.Join(dir, name), b, 0o644); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// launchServer starts the built-in Laya server and returns its predict URL
-// once the model has loaded. On first use it sets up a Python environment
-// with Laya, reporting progress through set.
-func (m *agentManager) launchServer(ctx context.Context, set agent.Status) (string, error) {
-	dir := filepath.Join(supportDir(), "agent")
-	if err := installScripts(dir); err != nil {
-		return "", fmt.Errorf("could not install the agent scripts: %w", err)
-	}
-	py, err := layaPython(ctx, dir, set)
-	if err != nil {
-		return "", err
-	}
-	set("starting", "Loading the Laya model…")
-	cmd := exec.Command(py, "-u", filepath.Join(dir, "laya_server.py"))
-	cmd.Dir = dir
-	out, err := cmd.StdoutPipe()
-	if err != nil {
-		return "", err
-	}
-	cmd.Stderr = cmd.Stdout
-	if err := cmd.Start(); err != nil {
-		return "", fmt.Errorf("could not start %s: %w", cmd.Path, err)
-	}
-	done := make(chan struct{})
-	m.mu.Lock()
-	if ctx.Err() != nil { // stopped while starting
-		m.mu.Unlock()
-		cmd.Process.Kill()
-		return "", ctx.Err()
-	}
-	m.server, m.done = cmd, done
-	m.mu.Unlock()
-
-	ready := make(chan string, 1)
-	var last string
-	go func() {
-		sc := bufio.NewScanner(out)
-		for sc.Scan() {
-			line := strings.TrimSpace(sc.Text())
-			if rest, ok := strings.CutPrefix(line, "agent ready "); ok {
-				ready <- rest
-			} else if line != "" && !strings.Contains(line, "Fetching") && !strings.Contains(line, "return Agent(") {
-				last = line
-			}
-		}
-		cmd.Wait()
-		close(done)
-	}()
-	select {
-	case url := <-ready:
-		return url, nil
-	case <-done:
-		if last == "" {
-			last = "the Laya server exited"
-		}
-		return "", errors.New(last)
-	case <-ctx.Done():
-		return "", ctx.Err()
-	}
-}
-
-// layaPython returns a Python interpreter that can import laya: one named by
-// SYSTEM1_PYTHON, the project's .venv, or the app's own environment in dir,
-// which it creates and installs Laya into on first use.
-func layaPython(ctx context.Context, dir string, set agent.Status) (string, error) {
-	if py := os.Getenv("SYSTEM1_PYTHON"); py != "" {
-		return py, nil
-	}
-	var candidates []string
-	if root, err := projectRoot(); err == nil {
-		candidates = append(candidates, venvPython(filepath.Join(root, ".venv")))
-	}
-	venv := filepath.Join(dir, "venv")
-	candidates = append(candidates, venvPython(venv))
-	for _, py := range candidates {
-		if hasLaya(ctx, py) {
-			return py, nil
-		}
-	}
-
-	base, err := basePython(ctx)
-	if err != nil {
-		return "", err
-	}
-	set("starting", "Setting up the built-in agent (first run only): creating a Python environment…")
-	if _, err := os.Stat(venvPython(venv)); err != nil {
-		if out, err := exec.CommandContext(ctx, base, "-m", "venv", venv).CombinedOutput(); err != nil {
-			return "", fmt.Errorf("could not create a Python environment: %v: %s", err, lastLine(string(out)))
-		}
-	}
-	py := venvPython(venv)
-	set("starting", "Setting up the built-in agent (first run only): installing Laya and PyTorch, which takes a few minutes…")
-	cmd := exec.CommandContext(ctx, py, "-m", "pip", "install", "--disable-pip-version-check", "laya")
-	out, _ := cmd.StdoutPipe()
-	cmd.Stderr = cmd.Stdout
-	if err := cmd.Start(); err != nil {
-		return "", err
-	}
-	var last string
-	sc := bufio.NewScanner(out)
-	for sc.Scan() {
-		if line := strings.TrimSpace(sc.Text()); line != "" {
-			last = line
-			switch {
-			case strings.HasPrefix(line, "Installing collected packages"):
-				set("starting", "Setting up the built-in agent (first run only): installing packages…")
-			case strings.HasPrefix(line, "Collecting") || strings.HasPrefix(line, "Downloading"):
-				set("starting", "Setting up the built-in agent (first run only): "+line)
-			}
-		}
-	}
-	if err := cmd.Wait(); err != nil {
-		if ctx.Err() != nil {
-			return "", ctx.Err()
-		}
-		return "", fmt.Errorf("could not install Laya: %s", last)
-	}
-	return py, nil
-}
-
-func venvPython(venv string) string {
-	if runtime.GOOS == "windows" {
-		return filepath.Join(venv, "Scripts", "python.exe")
-	}
-	return filepath.Join(venv, "bin", "python")
-}
-
-func hasLaya(ctx context.Context, py string) bool {
-	if _, err := os.Stat(py); err != nil {
-		return false
-	}
-	return exec.CommandContext(ctx, py, "-c", "import importlib.util, sys; sys.exit(importlib.util.find_spec('laya') is None)").Run() == nil
-}
-
-// basePython finds Python 3.10 or newer. Apps opened from the Finder don't
-// inherit the shell's PATH, so common install locations are searched too.
-func basePython(ctx context.Context) (string, error) {
-	names := []string{"python3.14", "python3.13", "python3.12", "python3.11", "python3.10", "python3", "python"}
-	var dirs []string
-	dirs = append(dirs, filepath.SplitList(os.Getenv("PATH"))...)
-	home, _ := os.UserHomeDir()
-	switch runtime.GOOS {
-	case "darwin":
-		dirs = append(dirs, "/opt/homebrew/bin", "/usr/local/bin", filepath.Join(home, ".pyenv", "shims"))
-		if vs, _ := filepath.Glob("/Library/Frameworks/Python.framework/Versions/3.*/bin"); vs != nil {
-			dirs = append(dirs, vs...)
-		}
-	case "linux":
-		dirs = append(dirs, "/usr/local/bin", "/usr/bin", filepath.Join(home, ".pyenv", "shims"))
-	case "windows":
-		names = []string{"python.exe", "python3.exe"}
-		if vs, _ := filepath.Glob(filepath.Join(os.Getenv("LOCALAPPDATA"), "Programs", "Python", "Python3*")); vs != nil {
-			dirs = append(dirs, vs...)
-		}
-	}
-	for _, name := range names {
-		for _, d := range dirs {
-			py := filepath.Join(d, name)
-			if _, err := os.Stat(py); err != nil {
-				continue
-			}
-			if exec.CommandContext(ctx, py, "-c", "import sys; sys.exit(sys.version_info < (3, 10))").Run() == nil {
-				return py, nil
-			}
-		}
-	}
-	return "", errors.New("the built-in agent needs Python 3.10 or newer (from python.org or Homebrew); install it, or use a custom agent")
-}
-
-func lastLine(s string) string {
-	lines := strings.Split(strings.TrimSpace(s), "\n")
-	return lines[len(lines)-1]
-}
-
-// projectRoot finds the project folder (with agents/laya_server.py) when the
-// app runs from it: the working directory under `wails dev`, or an ancestor
-// of the built app bundle. Its .venv is used when present.
-func projectRoot() (string, error) {
-	if dir := os.Getenv("SYSTEM1_ROOT"); dir != "" {
-		return dir, nil
-	}
-	var starts []string
-	if wd, err := os.Getwd(); err == nil {
-		starts = append(starts, wd)
-	}
-	if exe, err := os.Executable(); err == nil {
-		starts = append(starts, filepath.Dir(exe))
-	}
-	for _, dir := range starts {
-		for d := dir; ; d = filepath.Dir(d) {
-			if _, err := os.Stat(filepath.Join(d, "agents", "laya_server.py")); err == nil {
-				return d, nil
-			}
-			if filepath.Dir(d) == d {
-				break
-			}
-		}
-	}
-	return "", errors.New("project folder not found")
 }

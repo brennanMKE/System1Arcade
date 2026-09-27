@@ -1,7 +1,7 @@
 import './style.css';
 import {Setup, Load, Reset, TogglePause, SetMode, KeyDown, KeyUp, ReleaseAll, StartAgent, StopAgent, AgentStatus, Play, GetSettings, SaveSettings, TestAgent} from '../wailsjs/go/main/App';
 import {EventsOn} from '../wailsjs/runtime/runtime';
-import {soundOn, setSound, unlockAudio, playSounds} from './audio.js';
+import {soundOn, setSound, unlockAudio, playSounds, allowAudio} from './audio.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('screen');
@@ -66,6 +66,7 @@ async function init() {
     playSounds(u.sounds, u.paused);
   });
   const s = await Setup();
+  allowAudio(s.soundOff);
   games = s.games;
   $('games').replaceChildren(...games.map((g) => {
     const b = document.createElement('button');

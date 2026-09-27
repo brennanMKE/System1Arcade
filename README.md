@@ -38,23 +38,24 @@ question, and the plain-English description it was given ("Model sees").
 On a Mac, download the DMG from the [latest release](https://github.com/brennanMKE/System1Arcade/releases/latest),
 open it and drag System 1 Arcade to Applications. To build it yourself:
 
-You need Go and Node.js; for the built-in agent, also Python 3. On Linux you need the GTK 3 and
-WebKitGTK development packages (e.g. `libgtk-3-dev libwebkit2gtk-4.1-dev`).
+You need Go 1.27 or newer and Node.js; no Python. On Linux you also need the GTK 3 and WebKitGTK
+development packages (e.g. `libgtk-3-dev libwebkit2gtk-4.1-dev`).
 
 ```sh
-scripts/build.sh --agent        # macOS or Linux (--agent also sets up .venv with Laya)
+scripts/build.sh                # macOS or Linux
 open "build/bin/System 1 Arcade.app"
 ```
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\build.ps1 -Agent   # Windows
+powershell -ExecutionPolicy Bypass -File scripts\build.ps1   # Windows
 build\bin\System1.exe
 ```
 
 The build scripts install the Wails CLI version pinned in `go.mod` if it's missing, check the
 platform's prerequisites, and build for the current platform. Options: `--clean`, `--debug`,
-`--test` (`-Clean`, `-DebugBuild`, `-Test` on Windows). The Laya model downloads the first time the
-agent runs. For live reloading while developing, use `wails dev`.
+`--test` (`-Clean`, `-DebugBuild`, `-Test` on Windows), and `--python-tools` (`-PythonTools`) to set
+up `.venv` with Python Laya for the development tools in `agents/`. The Laya model (about 800 MB)
+downloads the first time the agent runs. For live reloading while developing, use `wails dev`.
 
 The app opens paused on a start screen. Pick a game, choose who plays (**You** or **Agent**) and
 press **Start**. With the agent selected, the game stays paused until the agent's first answer,
@@ -66,7 +67,8 @@ Keys: arrows or WASD to move, ↑ to rotate or hop, Z to rotate back, Space or X
 Enter to restart after a game over, P to pause, R to restart, M to turn sound on or off.
 
 Each game has retro sound effects, made in the app with the Web Audio API. Sound is on by default;
-the **Sound** button or M turns it off, and the app remembers the choice.
+the **Sound** button or M turns it off, and the app remembers the choice. `SYSTEM1_SOUND=off` starts
+a muted session without changing that choice, for automated runs (with `SYSTEM1_AUTOSTART`).
 
 ## How an agent plays
 
@@ -112,8 +114,10 @@ arrives.
 ## Clocks: realtime and lockstep
 
 - **Realtime** runs at 60 ticks per second whether or not the agent keeps up, like a person playing.
-  The agent asks, waits for its answer, acts, and asks again, so its speed sets the pace. Laya on
-  an Apple M4 Pro answers in about 65–120 ms, or 8–15 decisions per second.
+  The agent asks, waits for its answer, acts, and asks again, so its speed sets the pace. On an
+  Apple M4 Pro the built-in agent answers a Frogger or Space Invaders decision it hasn't seen
+  before in about 50–120 ms and a Tetris piece in about 300 ms; with the answer cache, almost every
+  decision takes well under a millisecond.
 - **Lockstep** freezes the game until the agent decides, then advances just enough to carry out the
   decision. Thinking time is free, so it measures decision quality alone, and the same seed and
   answers always replay the same game.
@@ -128,16 +132,25 @@ Open **Settings** from the side panel or the start screen to choose the agent.
 
 ### Built-in agent
 
-The app runs Laya locally. The agent scripts are built into the app, so it works wherever the app is
-installed. It uses the project's `.venv` when the app runs from the project folder. Otherwise, on first
-start, it creates its own Python environment in the app's support folder (`~/Library/Application
-Support/System 1 Arcade/agent` on macOS) and installs Laya there, showing progress while the game waits.
-This needs Python 3.10 or newer, which the app looks for in the usual install locations. Set
-`SYSTEM1_PYTHON` to choose an interpreter that already has Laya.
+The app runs Laya inside its own process with [laya-go](https://github.com/brennanMKE/laya-go), a
+pure-Go port of the Laya package: no Python, no PyTorch, nothing to install. On macOS the model's
+matrix math runs on Apple's Accelerate framework; elsewhere it runs in plain Go. Its answers match
+the Python package's (see [Laya performance](docs/laya-performance.md#the-built-in-agent-in-go)).
+
+The first time you start the agent, the app downloads the model (about 800 MB) from Hugging Face
+into the standard Hugging Face cache (`~/.cache/huggingface/hub`, or `$HF_HUB_CACHE` / `$HF_HOME`),
+showing progress while the game waits. A model the Python package already downloaded is used as is.
+Loading it takes well under a second; the model stays in memory (the app uses about 1.7 GB while
+the agent plays) and is freed when you stop it. `HF_HUB_OFFLINE=1` never downloads, `HF_TOKEN` is sent to Hugging Face if
+set, and `SYSTEM1_LAYA_MODEL` names another checkpoint (a folder or a Hugging Face repo).
 
 The built-in agent caches Laya's answers by state and question, since Laya always answers the same
 prompt the same way, so a repeated sentence skips the model. Set `SYSTEM1_LAYA_CACHE=0` to turn the
 cache off, or to a number to change how many answers it keeps (default 10,000).
+
+The Python server, `agents/laya_server.py`, still works as a custom agent. On a Mac it runs Laya on
+the GPU through PyTorch's MPS backend, which is faster for new sentences than the built-in agent's
+CPU; see [Connecting a custom agent](docs/custom-agents.md#laya-as-a-standalone-server).
 
 ### Custom agent
 
@@ -215,6 +228,12 @@ terminal:
 - **Headless runs.** `go run ./cmd/headless -addr 127.0.0.1:8799` serves the same API without a
   window, for benchmarks and CI (`-pace 10` limits the agent to the app's default 6 inputs/s).
   `agents/oracle_selfplay.py` plays many seeds there and reports the mean and spread of scores.
+  With `-agent laya` the headless command plays by itself with the built-in agent, with no Python;
+  `-agent <url>` uses a custom agent instead:
+
+  ```sh
+  go run ./cmd/headless -agent laya -game frogger -mode realtime -pace 10 -seed 1 -games 3
+  ```
 - **Screenshots.** `scripts/screenshot.sh` captures the app window; see
   [docs/screenshots.md](docs/screenshots.md).
 
@@ -225,18 +244,18 @@ terminal:
 | `internal/game` | the `Game` interface, virtual buttons, draw lists, and the `Advisor` interface (prompt → answers → decision) |
 | `internal/games/{tetris,frogger,invaders}` | the games and their advisors |
 | `internal/engine` | fixed 60 Hz loop, merging keyboard and agent input, realtime and lockstep, decision queue |
-| `internal/agent` | the client and loop that play a game with an HTTP decision endpoint |
+| `internal/agent` | the loop that plays a game with an agent: the built-in Laya agent (`local.go`, laya-go in the app's process) and the HTTP client for custom agents |
 | `internal/api` | the local `/v1` HTTP API |
 | `app.go`, `agent.go`, `main.go`, `frontend/` | the Wails desktop app: canvas renderer, start screen, settings, agent panel |
 | `cmd/headless` | the engine and API without a window |
-| `agents/` | built-in Laya server, terminal agent, custom agent example, batching helper, accuracy tool |
+| `agents/` | Python development tools: a Laya server (usable as a custom agent), terminal agent, custom agent example, batching helper, accuracy and fine-tuning tools |
 | `scripts/` | `build.sh` and `build.ps1` for the current platform; `screenshot.sh` for window captures |
 
 To add a game, implement `game.Game` (and `game.Advisor` for agents) and register it in
 `internal/games/registry.go`.
 
 ```sh
-go test ./internal/...   # includes an oracle-ceiling test for every game
+go test . ./internal/...   # includes an oracle-ceiling test for every game and Laya parity tests
 ```
 
 ## Known limitations
@@ -246,6 +265,8 @@ go test ./internal/...   # includes an oracle-ceiling test for every game
 - Frogger's safety window doesn't yet account for decision latency, which costs lives once traffic
   speeds up on level 3.
 - Space Invaders loses lives that perfect answers avoid; the oracle reaches waves 7–10.
-- The built-in agent's first start away from the project folder downloads Laya and PyTorch (about
-  1 GB) and needs Python 3.10 or newer.
+- The built-in agent's first start downloads the Laya model (about 800 MB).
+- The built-in agent runs Laya on the CPU. A decision the answer cache hasn't seen takes longer than
+  on the GPU through the Python server (see [Laya performance](docs/laya-performance.md#the-built-in-agent-in-go)).
+  Its speed on Windows and Linux, where no Accelerate framework exists, hasn't been measured.
 - The build scripts are tested on macOS; the Linux and Windows paths haven't been run yet.

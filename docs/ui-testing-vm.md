@@ -98,7 +98,7 @@ bring every revision plus `blobs/`. The current Laya snapshot is 807 MB in 5 fil
    and one decision per game, batched and one state per request, against the agent from the guest:
    `TestAgentLive` in `testagent_test.go`, built on the host with `go test -c` since the guest has
    no Go (output in `testagent.log`). Then it runs `vm-guest-play.py`. For each game and seed that launches the app fresh with
-   `open -n -a … --env SYSTEM1_AUTOSTART=<game>:<seed>`, polls `GET /v1/state` every 0.2 s until
+   `open -n -a … --env SYSTEM1_AUTOSTART=<game>:<seed> --env SYSTEM1_SOUND=off`, polls `GET /v1/state` every 0.2 s until
    `status.over` (or until the seed changes, since the agent loop restarts 2 s after a game over),
    screenshots the guest's screen, and quits the app.
 6. **Results.** Everything in the guest's `~/results` is streamed back through `tart exec … tar`
@@ -223,6 +223,17 @@ seed is logged and the app opens on the start screen as usual. Tests: `go test .
 Pass it with `open --env` (macOS 13+), since `open` does not otherwise pass the caller's
 environment to the app.
 
+## `SYSTEM1_SOUND=off`
+
+WebKit may let an autostarted app play Web Audio without a click, so every automated launch
+should also set `SYSTEM1_SOUND=off`. The app then starts with sound off for that session and
+never creates an audio context; the saved sound preference (the Sound button, M) is left as it
+was, and the Sound button can't turn sound on in that session.
+
+```sh
+open -n -a "System 1 Arcade" --env SYSTEM1_AUTOSTART=frogger:1 --env SYSTEM1_SOUND=off
+```
+
 ## Other layers (not built yet)
 
 This is a Go + Wails app, not an Xcode project, so there is no XCUITest target. The UI is a web
@@ -287,7 +298,7 @@ tart clone ghcr.io/cirruslabs/ubuntu:24.04 system1-linux-golden
 sudo apt install -y golang nodejs npm pkg-config libgtk-3-dev libwebkit2gtk-4.1-dev \
   xvfb xdotool imagemagick
 scripts/build.sh                                  # picks the webkit2_41 tag on 24.04
-SYSTEM1_AUTOSTART=frogger:1 xvfb-run -a ./build/bin/System1 &
+SYSTEM1_AUTOSTART=frogger:1 SYSTEM1_SOUND=off xvfb-run -a ./build/bin/System1 &
 import -window root ~/results/linux.png           # ImageMagick screenshot of the X display
 ```
 

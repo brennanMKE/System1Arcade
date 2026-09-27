@@ -3,6 +3,34 @@
 Release notes for each version. `scripts/publish-release.sh` uses the section for the version
 being released.
 
+## Unreleased
+
+The built-in agent no longer needs Python.
+
+- **Laya runs inside the app** through [laya-go](https://github.com/brennanMKE/laya-go), a pure-Go
+  port of the Laya package: no Python, PyTorch or virtual environment to set up. The first start
+  downloads the model (about 800 MB) into the standard Hugging Face cache, with progress in the
+  side panel; a model the Python package already downloaded is used as is. The model stays loaded
+  while the agent plays and is freed when you stop it.
+- **Same answers as before.** Over 343 recorded game requests the built-in agent gives the Python
+  server's answers: every choice the same and 99.86% of numbers identical to 4 decimals (the rest
+  differ by 0.0001). The answer cache (`SYSTEM1_LAYA_CACHE`) works as before.
+- **Runs on the CPU** (Apple Accelerate on macOS). `agents/laya_server.py` still works as a custom
+  agent and runs Laya on the GPU.
+- **Test connection** for the built-in agent asks the loaded model, or says whether the model still
+  has to be downloaded.
+- **The app keeps App Nap away while an agent plays.** With the window hidden or the display
+  asleep, macOS throttled the app, and the built-in agent's new sentences took up to 2.3 s instead
+  of about 0.1 s: Frogger seed 1 ended at 3,250–4,900 points in the app against 20,420 headless.
+- The agent asks at most once per game tick in realtime; with answers from the cache it used to
+  ask thousands of times a second and keep a CPU core busy.
+- `cmd/headless -agent laya` plays with the built-in agent, and `-agent <url>` with a custom one,
+  for benchmarks without Python or a window.
+- **`SYSTEM1_SOUND=off`** mutes a session, for automated and autostarted runs, without changing
+  the saved sound preference. `scripts/run-agent-vm.sh` sets it.
+- `scripts/build.sh --agent` is now `--python-tools` (`-PythonTools` on Windows), and is only
+  needed for the Python tools in `agents/`. `SYSTEM1_PYTHON` is gone. Building needs Go 1.27.
+
 ## 0.1.1
 
 Sound for every game.

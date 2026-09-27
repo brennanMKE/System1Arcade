@@ -522,6 +522,14 @@ func (e *Engine) collectSoundsLocked() {
 }
 
 // State returns the agent-facing state.
+// Tick returns the number of ticks played so far, without building the
+// whole State.
+func (e *Engine) Tick() uint64 {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.tick
+}
+
 func (e *Engine) State() State {
 	e.mu.Lock()
 	defer e.mu.Unlock()

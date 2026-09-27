@@ -112,9 +112,10 @@ stable part.
   side panel, and the app retries about once a second. The game keeps running in realtime mode.
 - The game stays paused until your agent's first successful answer, so slow startup (such as
   loading a model) costs nothing.
-- Speed matters in realtime mode: the world keeps moving while your agent thinks. The built-in
-  agent takes about 65–130 ms per decision. Lockstep mode (the **Clock** toggle) makes thinking
-  time free.
+- Speed matters in realtime mode: the world keeps moving while your agent thinks. Laya on an
+  Apple M4 Pro GPU (the Python server below) takes about 65–130 ms for a decision it hasn't seen
+  before; see [Laya performance](laya-performance.md) for the built-in agent's CPU times. Lockstep
+  mode (the **Clock** toggle) makes thinking time free.
 
 ## Settings reference
 
@@ -134,7 +135,10 @@ Support/System 1 Arcade` on macOS).
 
 ### Laya as a standalone server
 
-Run the built-in agent's server yourself, for example on a machine with a stronger GPU:
+The built-in agent runs Laya on the CPU inside the app, with no Python. `agents/laya_server.py`,
+the Python server the app used to launch, still works as a custom agent: it runs Laya with PyTorch,
+on the GPU where there is one (MPS on Apple silicon, CUDA elsewhere), which answers new sentences
+faster than the built-in agent's CPU. Run it on this Mac, or on a machine with a stronger GPU:
 
 ```sh
 python3 -m venv .venv && .venv/bin/pip install laya
@@ -149,6 +153,9 @@ The server caches answers by state and question and only sends new ones to the m
 reports the cache's hits, misses and hit rate; `--stats-every 10` also prints them every 10 seconds,
 and `--cache-size 0` turns the cache off. The app itself doesn't cache a custom endpoint's answers,
 since another model may not answer the same prompt the same way.
+
+[laya-go](https://github.com/brennanMKE/laya-go)'s `laya-server` speaks the same contract without
+Python, on the CPU.
 
 `--weights <dir>` (or `SYSTEM1_LAYA_WEIGHTS`) applies a decision head tuned by `agents/finetune.py`
 on top of the base model; see [Fine-tuning on oracle labels](laya-performance.md#fine-tuning-on-oracle-labels).
@@ -188,7 +195,7 @@ scripts/run-agent-vm.sh --games frogger,tetris,invaders --seeds 1,2,3 --cap 300 
 ```
 
 It starts the agent with the test-only `SYSTEM1_AUTOSTART=<game>[:<seed>]` switch, which does what
-pressing Start does. See [UI testing in a Tart VM](ui-testing-vm.md).
+pressing Start does, and mutes the app with `SYSTEM1_SOUND=off`. See [UI testing in a Tart VM](ui-testing-vm.md).
 
 ## Alternative: drive the game yourself
 

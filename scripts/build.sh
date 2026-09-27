@@ -2,26 +2,27 @@
 # Build System 1 Arcade for the current platform (macOS or Linux; on Windows
 # use scripts/build.ps1, or run this from Git Bash).
 #
-# Usage: scripts/build.sh [--agent] [--clean] [--debug] [--test] [--universal]
-#   --agent      also set up .venv with Laya for the built-in agent
+# Usage: scripts/build.sh [--clean] [--debug] [--test] [--universal] [--python-tools]
 #   --clean      remove previous build output first
 #   --debug      build with devtools and debug logging
 #   --test       run the Go tests before building
 #   --universal  macOS only: build for both Apple silicon and Intel
+#   --python-tools  also set up .venv with Python Laya for the development tools
+#                in agents/ (the app doesn't need Python: its agent runs Laya in Go)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-AGENT=0 CLEAN=0 DEBUG=0 TEST=0 UNIVERSAL=0
+PYTOOLS=0 CLEAN=0 DEBUG=0 TEST=0 UNIVERSAL=0
 for arg in "$@"; do
   case "$arg" in
-    --agent) AGENT=1 ;;
+    --python-tools|--agent) PYTOOLS=1 ;; # --agent: the old name
     --clean) CLEAN=1 ;;
     --debug) DEBUG=1 ;;
     --test) TEST=1 ;;
     --universal) UNIVERSAL=1 ;;
-    -h|--help) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,11p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option: $arg (see --help)" >&2; exit 2 ;;
   esac
 done
@@ -76,15 +77,15 @@ if [ "$TEST" = 1 ]; then
   go test ./internal/...
 fi
 
-if [ "$AGENT" = 1 ]; then
+if [ "$PYTOOLS" = 1 ]; then
   PY="$(command -v python3 || command -v python || true)"
-  [ -n "$PY" ] || die "Python 3 is required for the built-in agent"
+  [ -n "$PY" ] || die "Python 3 is required for the Python tools"
   VENV_PY=".venv/bin/python"; [ "$OS" = windows ] && VENV_PY=".venv/Scripts/python.exe"
   if [ ! -x "$VENV_PY" ]; then
     say "Creating .venv"
     "$PY" -m venv .venv
   fi
-  say "Installing Laya into .venv (the model downloads on first use)"
+  say "Installing Laya into .venv for agents/*.py (the model downloads on first use)"
   "$VENV_PY" -m pip install --quiet --upgrade pip
   "$VENV_PY" -m pip install --quiet laya
 fi

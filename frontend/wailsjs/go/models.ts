@@ -108,6 +108,7 @@ export namespace main {
 	    current: string;
 	    apiAddr: string;
 	    apiErr: string;
+	    soundOff: boolean;
 	
 	    static createFrom(source: any = {}) {
 	        return new Setup(source);
@@ -119,6 +120,7 @@ export namespace main {
 	        this.current = source["current"];
 	        this.apiAddr = source["apiAddr"];
 	        this.apiErr = source["apiErr"];
+	        this.soundOff = source["soundOff"];
 	    }
 	
 		convertValues(a: any, classs: any, asMap: boolean = false): any {

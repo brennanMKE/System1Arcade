@@ -78,17 +78,25 @@ func (a *App) shutdown(ctx context.Context) {
 	}
 }
 
+// SoundEnv names a switch for automated runs: SYSTEM1_SOUND=off starts the
+// app with sound off for that session, whatever the saved preference.
+const SoundEnv = "SYSTEM1_SOUND"
+
 // Setup is what the UI needs on load.
 type Setup struct {
 	Games   []game.Info `json:"games"`
 	Current string      `json:"current"`
 	APIAddr string      `json:"apiAddr"`
 	APIErr  string      `json:"apiErr"`
+	// SoundOff mutes this session (SYSTEM1_SOUND=off), for automated runs,
+	// without changing the saved sound preference.
+	SoundOff bool `json:"soundOff"`
 }
 
 func (a *App) Setup() Setup {
 	a.engine.Touch() // draw the paused game behind the launch screen
-	return Setup{Games: a.engine.Games(), Current: a.engine.Info().ID, APIAddr: a.apiAddr, APIErr: a.apiErr}
+	return Setup{Games: a.engine.Games(), Current: a.engine.Info().ID, APIAddr: a.apiAddr, APIErr: a.apiErr,
+		SoundOff: os.Getenv(SoundEnv) == "off"}
 }
 
 func (a *App) Load(id string) error      { return a.engine.Load(id, 0) }
@@ -130,12 +138,12 @@ func (a *App) SaveSettings(s Settings) error {
 
 // TestAgent checks that the agent in s answers a simple question.
 func (a *App) TestAgent(s Settings) (string, error) {
-	if s.Agent != "custom" {
-		return "The built-in agent starts when you press Start.", nil
-	}
-	c := &agent.Client{URL: s.URL, APIKey: s.APIKey, Model: s.Model, Batch: s.Batch}
 	ctx, cancel := context.WithTimeout(a.ctx, 15*time.Second)
 	defer cancel()
+	if s.Agent != "custom" {
+		return a.agent.testBuiltin(ctx)
+	}
+	c := &agent.Client{URL: s.URL, APIKey: s.APIKey, Model: s.Model, Batch: s.Batch}
 	msg, d, err := c.Test(ctx)
 	if err != nil {
 		return "", err

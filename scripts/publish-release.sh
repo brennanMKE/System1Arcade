@@ -41,8 +41,8 @@ cat >> "$NOTES" <<NOTES_END
 Applications. It's a universal app (Apple silicon and Intel), signed with Developer ID and
 notarized by Apple. Requires macOS 11 or later.
 
-**Built-in agent:** needs Python 3.10 or newer. On first start it creates its own Python
-environment and downloads Laya and PyTorch (about 1 GB) while the game waits.
+**Built-in agent:** runs Laya inside the app, with no Python. On first start it downloads the
+Laya model (about 800 MB) into the Hugging Face cache while the game waits.
 NOTES_END
 
 args=(--title "System 1 Arcade $VERSION" --notes-file "$NOTES" --verify-tag)

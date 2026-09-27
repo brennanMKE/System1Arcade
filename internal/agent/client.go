@@ -1,5 +1,7 @@
-// Package agent drives a game with an external decision endpoint: it sends
-// each prompt from /v1/laya to a URL and hands the answers to the game.
+// Package agent drives a game with an agent: Run asks an Asker for answers
+// to each prompt from /v1/laya and hands them to the game. Local is the
+// built-in agent (Laya in this process, via laya-go); Client sends each
+// prompt to a custom agent's URL.
 //
 // The endpoint contract (what a custom agent implements):
 //
@@ -152,14 +154,20 @@ func flatten(prefix string, raw map[string]json.RawMessage) (game.Answers, error
 // Test sends a tiny question and returns the answer and round-trip time.
 func (c *Client) Test(ctx context.Context) (string, time.Duration, error) {
 	start := time.Now()
-	ans, err := c.post(ctx, map[string]any{
-		"state": "The traffic light is green.",
-		"questions": map[string]any{"light": game.Choice("What color is the traffic light?", map[string]string{
-			"green": "green", "red": "red"})},
-	})
+	ans, err := c.post(ctx, testPrompt())
 	if err != nil {
 		return "", 0, err
 	}
 	a := ans["light"]
 	return fmt.Sprintf("answered %q (expected \"green\")", a.Choice), time.Since(start), nil
+}
+
+// testPrompt is a tiny question with an obvious answer, for checking that an
+// agent answers at all.
+func testPrompt() map[string]any {
+	return map[string]any{
+		"state": "The traffic light is green.",
+		"questions": map[string]any{"light": game.Choice("What color is the traffic light?", map[string]string{
+			"green": "green", "red": "red"})},
+	}
 }

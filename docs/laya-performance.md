@@ -5,7 +5,9 @@ Arcade today, what changed its results most, and ideas for making it better. Lay
 System 1 model the built-in agent uses; see [System 1 models](system-1-models.md) for background.
 
 All measurements were taken on an Apple M4 Pro (64 GB) using Laya 0.3.6 (the default English
-checkpoint, about 421M parameters) on the GPU through PyTorch's MPS backend. Most come from single
+checkpoint, about 421M parameters). Unless a section says otherwise they ran on the GPU through
+PyTorch's MPS backend, as `agents/laya_server.py` does; the built-in agent now runs Laya in Go on
+the CPU (see [The built-in agent in Go](#the-built-in-agent-in-go)). Most come from single
 runs on fixed seeds, not a formal benchmark, so treat them as indications rather than averages. The
 Tetris results are over seeds 1–20, played headless in lockstep with no input speed limit.
 
@@ -23,7 +25,110 @@ separates a model problem from a game-logic problem. Tetris is the exception: it
 with a fixed heuristic, and Laya now plays better than it (see
 [What made the difference in Tetris](#what-made-the-difference-in-tetris)).
 
+## The built-in agent in Go
+
+Since this change, the built-in agent runs Laya inside the app with
+[laya-go](https://github.com/brennanMKE/laya-go) (`internal/agent/local.go`) instead of starting
+`agents/laya_server.py`. It runs on the CPU: Apple Accelerate for the matrix multiplies on macOS,
+plain Go elsewhere.
+
+**Same answers.** The local agent sends the prompt through the same JSON the HTTP client would
+send (so criteria stay sorted by name, as the Python server received them), decodes it the way
+the server does, asks laya-go once per decision (`PredictMany`) and rounds answers to 4 decimals
+in the server's shapes. Checked against laya-go's golden fixtures, 343 recorded Tetris, Frogger and
+Space Invaders requests answered by the Python reference (PyTorch fp32 CPU):
+
+| Check | Result |
+|---|---|
+| App JSON for each request vs the recorded request | byte-identical, all 343 |
+| Token ids and option markers the model reads | identical (every sequence found in the fixture) |
+| Answers from Python's own logits, 343 batches and 3,605 single-state requests | identical to what the app decoded from Python (`TestLocalMatchesPython`) |
+| Answers with laya-go's forward pass vs the Python reference | 17,978 of 18,003 fields equal at 4 decimals (99.86%), the rest 0.0001 apart; 3,476 of 3,476 choices agree |
+| The same vs `laya_server.py --device cpu` over HTTP | the same figures |
+
+The last two rows are `SYSTEM1_LAYA_PARITY=1 SYSTEM1_LAYA_PARITY_URL=… go test ./internal/agent -run ModelParity`.
+
+**Speed.** A decision the answer cache hasn't seen, measured over golden requests with the cache
+off:
+
+| Decision | Built-in (Go, CPU) | Python server (MPS GPU), from above |
+|---|---|---|
+| Frogger or Space Invaders, 6 states | 120–137 ms | 63–110 ms |
+| Tetris, 8–17 states | 310–470 ms | 100–130 ms |
+| Answered from the cache | 0.05–0.1 ms | about 0.7–1 ms (HTTP included) |
+| Loading the model (cached on disk) | 0.1–0.2 s | a few seconds, about 20 s from app start |
+
+Fewer engine threads didn't help (8 threads: 120 ms; 4 threads: 137 ms for Frogger). In play, a
+new sentence is usually only part of a decision, so misses cost 45–120 ms in Frogger and Space
+Invaders and up to about 300 ms in Tetris, and more than 99% of decisions come from the cache.
+
+**Scores at the default settings.** Realtime, 6 inputs per second, seeds 1–5, played headless with
+`go run ./cmd/headless -agent <agent> -game <game> -mode realtime -pace 10 -seed 1 -games 3` (and
+`-seed 4 -games 2`): the same agent loop the app runs, each agent's answer cache starting empty and
+kept across its games. "Python/MPS" is `laya_server.py` on the GPU as a custom agent
+(`-agent http://127.0.0.1:8766/predict`). Mean (sd):
+
+| Game | Built-in (Go, CPU) | Python/MPS | Earlier, `laya_agent.py` in the app (above) |
+|---|---|---|---|
+| Frogger | 19,712 (5,708) | 19,712 (5,708) | 19,706 (5,748) |
+| Space Invaders | 3,644 (1,197) | 2,692 (1,211) | 4,090 (742) |
+| Tetris | 51,991 (10,425) | 55,906 (13,102) | 55,977 (12,927) |
+
+Per seed:
+
+| Seed | Frogger Go / MPS | Space Invaders Go / MPS | Tetris Go / MPS |
+|---|---|---|---|
+| 1 | 20,420 / 20,420 | 4,770 / 1,930 | 56,318 / 56,320 |
+| 2 | 24,900 / 24,900 | 3,910 / 4,720 | 49,584 / 49,584 |
+| 3 | 11,230 / 11,230 | 1,960 / 1,960 | 66,342 / 66,422 |
+| 4 | 24,720 / 24,720 | 2,920 / 2,920 | 37,860 / 37,394 |
+| 5 | 17,290 / 17,290 | 4,660 / 1,930 | 49,850 / 69,808 |
+
+Frogger played the same games point for point. Space Invaders and Tetris games sometimes take a
+different path from one timing difference and then diverge, in both directions; over these seeds
+neither agent is ahead by more than the spread. So at the default input speed the CPU is fast
+enough: the input limit and the cache, not the model, set the pace.
+
+Two cautions:
+
+- **Busy CPUs slow new sentences.** One Frogger run that overlapped a Go build ended at 570 points
+  (misses took up to 440 ms), against 20,420 undisturbed.
+- **App Nap slowed the app, not the game (fixed).** Launches of the built app with the built-in
+  agent on Frogger seed 1 ended at 3,250–4,900 points, where headless play and the app with the
+  Python/MPS server as a custom agent scored 20,420. The cause was App Nap: with the window hidden
+  or the display asleep (unattended runs), macOS throttles the app about 30 s after launch, and
+  its threads drop from priority 31 to 4. The engine still ticked at 60 Hz, but the forward pass,
+  which now runs in the app's process, slowed: in a traced low run, misses took 200 ms–2.3 s
+  (a 2.3 s miss let 79 ticks pass on an old answer), against at most 138 ms headless. A Python
+  server runs in its own process, which isn't napped, so custom agents weren't affected. The app
+  now holds an `NSProcessInfo` activity (user-initiated, latency-critical; idle system sleep still
+  allowed) while any agent plays (`activity_darwin.go`), and releases it when the agent stops.
+
+  Checks at the default settings (realtime, 6 inputs/s); the app runs were muted, unattended
+  launches with `SYSTEM1_AUTOSTART`:
+
+  | Run | Result |
+  |---|---|
+  | A test process wired like the app, no window (engine, JSON-encoding subscriber, app pace, built-in agent) | 20,420, 60.0 ticks/s |
+  | App before the fix, Frogger seed 1, 6 launches | 4,460, 3,590, 4,900, 3,250, 4,890, and 20,420 once (slowest miss 186 ms: napped late or not at all) |
+  | Same build with App Nap turned off (`NSAppSleepDisabled`) | 20,420, slowest miss 124 ms |
+  | App with the fix, Frogger seed 1, 4 launches (the first traced) | 20,420 each; slowest miss 138 ms |
+  | App with the fix, Space Invaders seed 1 | 3,830; headless the same night: 3,830 |
+  | App with the fix, Tetris seed 1, 2 launches | 52,466 and 56,320; headless the same night: 56,298 |
+
+  Tetris takes a different path now and then from one timing difference, headless too (56,298
+  and 56,318 on the same seed), so one lower game is within its spread. Keeping the window
+  visible avoided App Nap too, which may be why some earlier in-app runs were fine.
+
+**Memory.** The built app used 1.80–1.85 GB (resident) while the built-in agent played (the
+model's weights are held as float32). Stopping the agent frees the model: with the app's agent
+manager in a test process, 1.70–1.72 GB while playing fell to 0.19–0.21 GB after stop, over two
+start/stop rounds.
+
 ## Speed
+
+These are the Python server's times on the GPU; the built-in agent's CPU times are
+[above](#the-built-in-agent-in-go).
 
 | Measurement | Result |
 |---|---|
@@ -41,7 +146,7 @@ costs little more than a single question. Running on the GPU matters: the CPU wa
 ### Answer cache
 
 Laya always gives the same answer to the same prompt, and Frogger and Space Invaders keep repeating
-the same sentences. The Laya server (`agents/laya_server.py`, which the built-in agent runs) and
+the same sentences. The built-in agent, the Laya server (`agents/laya_server.py`) and
 `agents/laya_agent.py` cache answers by the exact state and the question, and send only new ones to
 the model, still as one batch. One minute per game through the server, seed 3:
 
@@ -319,7 +424,9 @@ worth rerunning when a new wording or a new game gives questions base Laya misre
 
 5. **Cache answers.** Done: see [Answer cache](#answer-cache). More than 99.9% of answers in all
    three games now come from the cache, so a decision usually takes under a millisecond.
-6. **Faster runtimes.** [laya-mlx](https://github.com/mizorewww/laya-mlx) runs Laya natively on Apple
+6. **Faster runtimes.** The built-in agent now runs laya-go on the CPU (see
+   [The built-in agent in Go](#the-built-in-agent-in-go)); a Metal engine for laya-go would bring
+   GPU speed back without Python. [laya-mlx](https://github.com/mizorewww/laya-mlx) runs Laya natively on Apple
    Silicon (its demo plays Snake; claims of large speedups come from posts comparing it with Jev's
    hosted API, not from the repo); [@receptron/laya](https://github.com/receptron/laya) runs it with ONNX Runtime from
    Node.js. Either could replace the PyTorch server behind the same endpoint.
