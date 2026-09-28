@@ -3,7 +3,7 @@ module system1
 go 1.27.1
 
 require (
-	github.com/brennanMKE/laya-go v0.0.0-20260924025419-ec1ddd43ef43
+	github.com/brennanMKE/laya-go v0.0.0-20260928031647-1c1b85ac8145
 	github.com/wailsapp/wails/v2 v2.16.0
 )
 

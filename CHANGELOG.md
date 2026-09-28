@@ -3,6 +3,24 @@
 Release notes for each version. `scripts/publish-release.sh` uses the section for the version
 being released.
 
+## Unreleased
+
+The built-in agent runs on the GPU on Apple silicon Macs.
+
+- **Laya on the GPU with Metal.** laya-go (updated to `1c1b85a`) adds a Metal engine, and the
+  built-in agent uses it on Macs with Apple silicon (M1 or newer) when the GPU passes a self-test
+  at load; otherwise, including Intel Macs, some virtual machines, Windows and Linux, it runs on
+  the CPU as before. New sentences take about half as long as on the CPU (Tetris: 38–64 ms at the
+  median instead of 89–99 ms), with the same scores at the default settings.
+- **Less memory.** The app uses about 1 GB while the built-in agent plays on the GPU, down from
+  about 1.8 GB (the Metal engine keeps the model's fp16 weights as they are).
+- **Shows where it runs.** The side panel says "It runs on the GPU (Metal)" (or the CPU) while the
+  agent plays, the log says "Laya loaded on the GPU (Metal) in 99ms", with the reason when the GPU
+  engine didn't start, and **Test connection** names the engine. `LAYA_ENGINE=native` or
+  `LAYA_ENGINE=metal` chooses one for testing.
+- `cmd/headless` also reports the median and p99 of the decisions over 10 ms (about the ones with
+  a new sentence).
+
 ## 0.2.0
 
 The built-in agent no longer needs Python.

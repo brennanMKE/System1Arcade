@@ -2,8 +2,8 @@ git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3 h1:N3IGoHHp9pb6mj1cbXbuaSXV/UMKwmbKLf
 git.sr.ht/~jackmordaunt/go-toast/v2 v2.0.3/go.mod h1:QtOLZGz8olr4qH2vWK0QH0w0O4T9fEIjMuWpKUsH7nc=
 github.com/bep/debounce v1.2.1 h1:v67fRdBA9UQu2NhLFXrSg0Brw7CexQekrBwDMM8bzeY=
 github.com/bep/debounce v1.2.1/go.mod h1:H8yggRPQKLUhUoqrJC1bO2xNya7vanpDl7xR3ISbCJ0=
-github.com/brennanMKE/laya-go v0.0.0-20260924025419-ec1ddd43ef43 h1:+/qFvRO+zWAW4C49zFKq1T4Le1k9Fli7GvfXE1uCeLM=
-github.com/brennanMKE/laya-go v0.0.0-20260924025419-ec1ddd43ef43/go.mod h1:yXPvfOUenjuZGro4Ho9e595XrbGwSqzQ5eVI/leSfcw=
+github.com/brennanMKE/laya-go v0.0.0-20260928031647-1c1b85ac8145 h1:e6fDmD214JGX3TF2kKDjvlfs4c8aEorzChH0Vut7lQ8=
+github.com/brennanMKE/laya-go v0.0.0-20260928031647-1c1b85ac8145/go.mod h1:ZVy0TbdTtP/ZOXyAFEMTMBw/WoUl6rg3dxwA+qiuYLU=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/ebitengine/purego v0.11.1 h1:2zpWRSQNVKN4eKsKO9eM1ILDgWfYMY9GwqRmK6XeQ/0=

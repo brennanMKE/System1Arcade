@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"slices"
+	"strings"
 
 	laya "github.com/brennanMKE/laya-go"
 	"github.com/brennanMKE/laya-go/answercache"
@@ -46,6 +47,28 @@ func LoadLocal(ctx context.Context, opts laya.Options) (*Local, error) {
 		return nil, err
 	}
 	return NewLocal(m, size), nil
+}
+
+// Engine says in plain words where the model runs: "the GPU (Metal)" or
+// "the CPU". laya-go picks the engine ("auto": Metal on Apple Silicon when the
+// GPU passes its self-test, else the CPU); LAYA_ENGINE=native or metal
+// overrides it.
+func (l *Local) Engine() string { return EngineLabel(l.model.Info().Engine) }
+
+// EngineDetail is laya-go's own description of the engine, such as
+// "metal fp16 weights (Apple M4 Pro)" or "native (accelerate)", and why
+// Metal wasn't used when "auto" tried it and fell back to the CPU.
+func (l *Local) EngineDetail() (name, fallback string) {
+	info := l.model.Info()
+	return info.Engine, info.EngineFallback
+}
+
+// EngineLabel describes a laya.Info.Engine name for people.
+func EngineLabel(name string) string {
+	if strings.HasPrefix(name, "metal") {
+		return "the GPU (Metal)"
+	}
+	return "the CPU"
 }
 
 // Close frees the model. Ask fails afterwards.

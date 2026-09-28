@@ -7,6 +7,8 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -76,6 +78,9 @@ type AgentStatus struct {
 	State  string `json:"state"` // off, starting, running, error
 	Detail string `json:"detail"`
 	Kind   string `json:"kind"` // builtin or custom
+	// Engine is where the built-in agent's model runs once it has loaded,
+	// such as "the GPU (Metal)" or "the CPU" ("" otherwise).
+	Engine string `json:"engine,omitempty"`
 }
 
 // agentManager runs one agent at a time: the built-in agent, Laya loaded
@@ -108,6 +113,7 @@ func (m *agentManager) start(parent context.Context, e *engine.Engine, s Setting
 	m.mu.Unlock()
 	e.SetPaused(true) // nothing moves until the agent answers
 
+	var engineLabel string // guarded by m.mu
 	set := func(state, detail string) {
 		m.mu.Lock()
 		defer m.mu.Unlock()
@@ -116,7 +122,7 @@ func (m *agentManager) start(parent context.Context, e *engine.Engine, s Setting
 				// Also in the log, since the UI only shows the latest status.
 				log.Printf("agent error: %s", detail)
 			}
-			m.status = AgentStatus{State: state, Detail: detail, Kind: s.Agent}
+			m.status = AgentStatus{State: state, Detail: detail, Kind: s.Agent, Engine: engineLabel}
 		}
 	}
 	go func() {
@@ -143,6 +149,8 @@ func (m *agentManager) start(parent context.Context, e *engine.Engine, s Setting
 			}()
 			m.mu.Lock()
 			m.local = local
+			engineLabel = local.Engine()
+			m.status.Engine = engineLabel
 			m.mu.Unlock()
 			asker = local
 		}
@@ -184,7 +192,11 @@ func loadLaya(ctx context.Context, set agent.Status) (*agent.Local, error) {
 	if err != nil {
 		return nil, fmt.Errorf("could not load the Laya model: %w", err)
 	}
-	log.Printf("built-in agent: Laya loaded in %v", time.Since(start).Round(time.Millisecond))
+	name, fallback := local.EngineDetail()
+	if fallback != "" {
+		log.Printf("built-in agent: the Metal GPU engine did not start (%s); using the CPU", fallback)
+	}
+	log.Printf("built-in agent: Laya loaded on %s in %v [%s]", local.Engine(), time.Since(start).Round(time.Millisecond), name)
 	return local, nil
 }
 
@@ -228,14 +240,32 @@ func (m *agentManager) testBuiltin(ctx context.Context) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		return fmt.Sprintf("Laya is running in the app: %s in %d ms.", msg, time.Since(start).Milliseconds()), nil
+		return fmt.Sprintf("Laya is running in the app on %s: %s in %d ms.", local.Engine(), msg, time.Since(start).Milliseconds()), nil
 	}
+	where := plannedEngine()
 	if os.Getenv("SYSTEM1_LAYA_MODEL") == "" {
 		if _, err := hub.Find(hub.Options{}); err != nil {
-			return "The built-in agent runs Laya inside the app. Press Start to download the model (about 800 MB, first time only).", nil
+			return "The built-in agent runs Laya inside the app, " + where + ". Press Start to download the model (about 800 MB, first time only).", nil
 		}
 	}
-	return "The built-in agent runs Laya inside the app. The model is downloaded; it loads when you press Start.", nil
+	return "The built-in agent runs Laya inside the app, " + where + ". The model is downloaded; it loads when you press Start.", nil
+}
+
+// plannedEngine says where the built-in agent will run before it has
+// loaded: laya-go's "auto" takes the Metal GPU engine on Apple Silicon when
+// the GPU passes a self-test at load, and the CPU otherwise; LAYA_ENGINE
+// (native or metal) overrides it.
+func plannedEngine() string {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(laya.EngineEnv))) {
+	case laya.EngineNative, "cpu":
+		return "on the CPU (LAYA_ENGINE)"
+	case laya.EngineMetal, "gpu", "mps":
+		return "on the GPU with Metal (LAYA_ENGINE)"
+	}
+	if runtime.GOOS == "darwin" && runtime.GOARCH == "arm64" {
+		return "on the GPU with Metal when it's available (otherwise the CPU)"
+	}
+	return "on the CPU"
 }
 
 func supportDir() string {

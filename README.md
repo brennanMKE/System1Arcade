@@ -133,24 +133,29 @@ Open **Settings** from the side panel or the start screen to choose the agent.
 ### Built-in agent
 
 The app runs Laya inside its own process with [laya-go](https://github.com/brennanMKE/laya-go), a
-pure-Go port of the Laya package: no Python, no PyTorch, nothing to install. On macOS the model's
-matrix math runs on Apple's Accelerate framework; elsewhere it runs in plain Go. Its answers match
-the Python package's (see [Laya performance](docs/laya-performance.md#the-built-in-agent-in-go)).
+pure-Go port of the Laya package: no Python, no PyTorch, nothing to install. On a Mac with Apple
+silicon (M1 or newer) the model runs on the GPU with Metal; elsewhere, or when the GPU isn't usable
+(some virtual machines), it runs on the CPU, with Apple's Accelerate framework on Intel Macs and in
+plain Go on Windows and Linux. The side panel and the log say which one is running, and **Test
+connection** names it too. Set `LAYA_ENGINE=native` (the CPU) or `LAYA_ENGINE=metal` before
+launching to choose. Its answers match the Python package's (see
+[Laya performance](docs/laya-performance.md#the-built-in-agent-in-go)).
 
 The first time you start the agent, the app downloads the model (about 800 MB) from Hugging Face
 into the standard Hugging Face cache (`~/.cache/huggingface/hub`, or `$HF_HUB_CACHE` / `$HF_HOME`),
 showing progress while the game waits. A model the Python package already downloaded is used as is.
-Loading it takes well under a second; the model stays in memory (the app uses about 1.7 GB while
-the agent plays) and is freed when you stop it. `HF_HUB_OFFLINE=1` never downloads, `HF_TOKEN` is sent to Hugging Face if
+Loading it takes well under a second; the model stays in memory while the agent plays (the app uses
+about 1 GB on the GPU, about 1.8 GB on the CPU) and is freed when you stop it. `HF_HUB_OFFLINE=1` never downloads, `HF_TOKEN` is sent to Hugging Face if
 set, and `SYSTEM1_LAYA_MODEL` names another checkpoint (a folder or a Hugging Face repo).
 
 The built-in agent caches Laya's answers by state and question, since Laya always answers the same
 prompt the same way, so a repeated sentence skips the model. Set `SYSTEM1_LAYA_CACHE=0` to turn the
 cache off, or to a number to change how many answers it keeps (default 10,000).
 
-The Python server, `agents/laya_server.py`, still works as a custom agent. On a Mac it runs Laya on
-the GPU through PyTorch's MPS backend, which is faster for new sentences than the built-in agent's
-CPU; see [Connecting a custom agent](docs/custom-agents.md#laya-as-a-standalone-server).
+The Python server, `agents/laya_server.py`, still works as a custom agent (on a Mac it runs Laya on
+the GPU through PyTorch's MPS backend); see
+[Connecting a custom agent](docs/custom-agents.md#laya-as-a-standalone-server). On Apple silicon
+the built-in agent answers new sentences faster than it does.
 
 ### Custom agent
 
@@ -266,7 +271,8 @@ go test . ./internal/...   # includes an oracle-ceiling test for every game and 
   speeds up on level 3.
 - Space Invaders loses lives that perfect answers avoid; the oracle reaches waves 7–10.
 - The built-in agent's first start downloads the Laya model (about 800 MB).
-- The built-in agent runs Laya on the CPU. A decision the answer cache hasn't seen takes longer than
-  on the GPU through the Python server (see [Laya performance](docs/laya-performance.md#the-built-in-agent-in-go)).
-  Its speed on Windows and Linux, where no Accelerate framework exists, hasn't been measured.
+- Only Macs with Apple silicon run the built-in agent on the GPU. Elsewhere it runs Laya on the CPU,
+  where a decision the answer cache hasn't seen takes several times longer (see
+  [Laya performance](docs/laya-performance.md#the-built-in-agent-in-go)). Its speed on Windows and
+  Linux, where no Accelerate framework exists, hasn't been measured.
 - The build scripts are tested on macOS; the Linux and Windows paths haven't been run yet.

@@ -32,7 +32,7 @@ not measured.
   for a full Laya pass through Accelerate is close to PyTorch's own CPU time: 71 ms against 81 ms
   for one state, and 395 ms (14 states) against 431 ms (16 states) for a Tetris-sized batch. That
   is 2–4 times slower than today's MPS GPU path for multi-state decisions. Matching MPS needs the
-  Metal engine (phase 5).
+  Metal engine (phase 5, since done: see [Plan](#plan)).
 - **Nothing native to ship on macOS, and Windows cross-compilation keeps working.** Accelerate is
   part of macOS, purego needs no C toolchain, and the Windows build doesn't change.
 - **Prove parity with golden fixtures from the Python reference.** Token ids must match exactly.
@@ -841,6 +841,15 @@ Each phase ends with something testable. Durations are rough, for one person.
 
 - A Metal engine: MLX through cgo or MPSGraph through purego. *Target:* at or below today's MPS
   times (Invaders ≤ 65 ms, Tetris ≤ 130 ms).
+- *Metal done (laya-go `1c1b85a`, adopted 2026-09-27):* neither MLX nor MPSGraph. Metal compute
+  kernels compiled from source at load, called through purego (no cgo), with fp16 weights and fp32
+  math, chosen by default ("auto") on Apple silicon after a startup self-test, with the CPU engine
+  as the fallback. Forward pass on the M4 Pro: 54 ms for 6 states and 130 ms for a 14-state Tetris
+  batch (laya-go's benchmark). In play, new sentences took 28–61 ms at the median in Frogger and
+  Space Invaders and 38–64 ms in Tetris, against 46–99 ms on the CPU, with the same scores and
+  about 0.95 GB of memory instead of 1.8 GB (see
+  [Laya performance](laya-performance.md#on-the-gpu-with-metal)). The target is met.
+- *Still open:* SIMD kernels or ONNX Runtime for Windows and Linux.
 - For Windows and Linux, SIMD kernels or an ONNX Runtime engine through purego, whichever wins a
   780-token benchmark on an AVX2 machine by enough to pay for its cost.
 
@@ -862,7 +871,10 @@ process (`internal/agent/local.go`); the Python server and its setup are gone fr
 scores. Played headless at the default settings, its scores match the Python/MPS server's
 (Frogger game for game). One open question: in the built app, Frogger seed 1 scored far lower with
 the built-in agent than with the Python/MPS server as a custom agent; that needs more in-app runs
-before deciding whether macOS should keep the Python/MPS server as the default.
+before deciding whether macOS should keep the Python/MPS server as the default. (Answered: App
+Nap was throttling the app, now fixed; see
+[Laya performance](laya-performance.md#the-built-in-agent-in-go). Since 2026-09-27 the built-in
+agent runs on Metal on Apple silicon, faster than the Python/MPS server.)
 
 **Interim step: no Go changes to the agent loop.** Ship `laya-server` inside the app and have
 `agentManager.launchServer` start it instead of Python. It prints the same `agent ready` line. This
@@ -894,8 +906,9 @@ removes Python right away with a small diff in `agent.go`:
 
   `agents/laya_server.py`, `laya_agent.py` and `eval_questions.py` stay as development tools and
   as an example of an external agent. The Python server remains usable as a custom agent, which
-  keeps MPS speed available until the Metal engine exists.
-- **Speed.** On Macs the built-in agent would run at PyTorch-CPU speed until phase 5. Measure all
+  kept MPS speed available until the Metal engine existed.
+- **Speed.** On Macs the built-in agent would run at PyTorch-CPU speed until phase 5 (done: it
+  runs on Metal on Apple silicon now). Measure all
   three games in real time with the answer cache on before switching the default. If Space
   Invaders or Frogger scores drop, keep the Python/MPS server as the default on macOS until the
   Metal engine lands.

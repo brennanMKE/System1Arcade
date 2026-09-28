@@ -200,7 +200,7 @@ function showAgent(st) {
   const msg = {
     off: `Off. ${kindName()} is ready to start; the game is under keyboard control.`,
     starting: `${st.detail || 'Starting…'} The game is paused until the agent answers.`,
-    running: `${who} is playing the game on screen, ${settings.inputRate ? `at up to ${settings.inputRate} inputs per second` : 'at full speed'}.`,
+    running: `${who} is playing the game on screen, ${settings.inputRate ? `at up to ${settings.inputRate} inputs per second` : 'at full speed'}.${st.engine ? ` It runs on ${st.engine}.` : ''}`,
     error: `Agent problem: ${st.detail}`,
   }[st.state] || st.state;
   const el = $('agent-status');

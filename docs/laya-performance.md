@@ -6,8 +6,9 @@ System 1 model the built-in agent uses; see [System 1 models](system-1-models.md
 
 All measurements were taken on an Apple M4 Pro (64 GB) using Laya 0.3.6 (the default English
 checkpoint, about 421M parameters). Unless a section says otherwise they ran on the GPU through
-PyTorch's MPS backend, as `agents/laya_server.py` does; the built-in agent now runs Laya in Go on
-the CPU (see [The built-in agent in Go](#the-built-in-agent-in-go)). Most come from single
+PyTorch's MPS backend, as `agents/laya_server.py` does; the built-in agent now runs Laya in Go,
+on the GPU with Metal on Apple silicon and on the CPU elsewhere (see
+[The built-in agent in Go](#the-built-in-agent-in-go) and [On the GPU with Metal](#on-the-gpu-with-metal)). Most come from single
 runs on fixed seeds, not a formal benchmark, so treat them as indications rather than averages. The
 Tetris results are over seeds 1–20, played headless in lockstep with no input speed limit.
 
@@ -29,8 +30,10 @@ with a fixed heuristic, and Laya now plays better than it (see
 
 Since this change, the built-in agent runs Laya inside the app with
 [laya-go](https://github.com/brennanMKE/laya-go) (`internal/agent/local.go`) instead of starting
-`agents/laya_server.py`. It runs on the CPU: Apple Accelerate for the matrix multiplies on macOS,
-plain Go elsewhere.
+`agents/laya_server.py`. It first ran on the CPU (Apple Accelerate for the matrix multiplies on
+macOS, plain Go elsewhere), which is what the rest of this section measures; on Apple silicon it
+now runs on the GPU (see [On the GPU with Metal](#on-the-gpu-with-metal)), and the CPU engine is
+the fallback.
 
 **Same answers.** The local agent sends the prompt through the same JSON the HTTP client would
 send (so criteria stay sorted by name, as the Python server received them), decodes it the way
@@ -149,6 +152,72 @@ headless in the guest, with no window, 140, 70 and 210. App Nap played no part: 
 activity while an agent plays. With no model in the guest, the app downloaded 807 MB in about
 10 s, showing `Downloading the Laya model (X of 807 MB)…`, checked every file's hash (they match
 the host's copy), and was playing 12.3 s after launch (Frogger seed 1: 11,110).
+
+### On the GPU with Metal
+
+laya-go `1c1b85a` added a Metal engine: the whole forward pass on the GPU, with the checkpoint's
+fp16 Linear weights kept as fp16 and everything else in fp32 (see laya-go's README, "Engines").
+laya-go picks it by default ("auto") on Apple silicon when a Metal device is present and passes a
+self-test at load, and falls back to the CPU engine otherwise; `LAYA_ENGINE=native` or `metal`
+overrides that. The app logs which one runs (`built-in agent: Laya loaded on the GPU (Metal) in
+99ms [metal fp16 weights (Apple M4 Pro)]`, with the reason when "auto" fell back), shows it in the
+side panel while the agent plays, and **Test connection** names it.
+
+**Scores at the default settings** (2026-09-27). Realtime, 6 inputs per second, seeds 1–5, with
+`cmd/headless -agent laya … -seed 1 -games 3` and `-seed 4 -games 2` as above, one run at a time,
+Metal (the default) against the CPU engine (`LAYA_ENGINE=native`), on the M4 Pro with a
+light to moderate load from other work (load average 2–17 on 12 cores). Mean (sd):
+
+| Game | Metal | CPU (`LAYA_ENGINE=native`) | CPU, earlier (above) | Python/MPS, earlier (above) |
+|---|---|---|---|---|
+| Frogger | 19,712 (5,708) | 19,712 (5,708) | 19,712 (5,708) | 19,712 (5,708) |
+| Space Invaders, pass A | 4,112 (1,334) | 2,600 (1,837) | 3,644 (1,197) | 2,692 (1,211) |
+| Space Invaders, pass B | 3,060 (1,548) | 3,206 (842) | | |
+| Tetris | 55,994 (12,932) | 55,999 (12,941) | 51,991 (10,425) | 55,906 (13,102) |
+
+Per seed:
+
+| Seed | Frogger Metal / CPU | Space Invaders Metal / CPU, pass A; pass B | Tetris Metal / CPU |
+|---|---|---|---|
+| 1 | 20,420 / 20,420 | 4,510 / 950; 3,830 / 3,830 | 56,264 / 56,304 |
+| 2 | 24,900 / 24,900 | 3,910 / 970; 3,910 / 3,910 | 49,584 / 49,598 |
+| 3 | 11,230 / 11,230 | 1,960 / 1,960; 1,960 / 1,960 | 66,432 / 66,432 |
+| 4 | 24,720 / 24,720 | 5,520 / 4,460; 940 / 3,610 | 37,882 / 37,852 |
+| 5 | 17,290 / 17,290 | 4,660 / 4,660; 4,660 / 2,720 | 69,808 / 69,808 |
+
+Frogger played the same games point for point on both engines, as it did on the CPU and on MPS
+before, and Tetris within a few dozen points per seed. Space Invaders diverges from one timing
+difference, in both directions: pass A favored Metal and pass B the CPU, and over the ten games
+Metal averaged 3,586 (sd 1,470) against the CPU's 2,903 (1,384), within the spread. So at
+the default input speed the engines score the same; the input limit and the answer cache set the
+pace, as on the CPU before.
+
+**Decision latency.** Over 99% of decisions come from the answer cache (median 0.06 ms in
+Frogger and Space Invaders, 0.1–0.5 ms in Tetris) on either engine. The decisions over 10 ms are
+about the ones with a new sentence, which run the model (`cmd/headless` now prints their median
+and p99). Ranges over the per-game values of the five seeds (both Space Invaders passes):
+
+| Game | Metal: median / p99 of new sentences | Metal: slowest | CPU: median / p99 | CPU: slowest |
+|---|---|---|---|---|
+| Frogger | 28–55 / 36–63 ms | 64 ms | 46–56 / 48–110 ms | 121 ms |
+| Space Invaders | 31–61 / 57–76 ms | 76 ms | 47–88 / 50–143 ms | 143 ms |
+| Tetris | 38–64 / 52–108 ms | 108 ms | 89–99 / 99–202 ms | 202 ms |
+
+Metal answers new sentences in about half the CPU's time, and faster than the Python server on
+MPS (63–110 ms for Frogger and Space Invaders, 100–130 ms for Tetris, above). Loading took
+96–670 ms in the app and 0.1–0.2 s headless (the kernels are compiled at load), against
+0.1–0.2 s on the CPU.
+
+**Memory.** Peak resident memory of `cmd/headless` (from `/usr/bin/time -l`) was 0.90–0.98 GB
+with Metal against 1.77–1.79 GB on the CPU. The built app peaked at 1.01–1.04 GB while the
+built-in agent played each game on Metal, against 1.84 GB for the same app with
+`LAYA_ENGINE=native` (and 1.80–1.85 GB before, above).
+
+**In the app.** One muted, unattended launch per game (`SYSTEM1_SOUND=off`,
+`SYSTEM1_AUTOSTART=<game>:1`, 90 s each) logged `Laya loaded on the GPU (Metal)`, and the agent
+played: Frogger reached 10,090 points on level 3, Space Invaders 1,680, Tetris 10,380 on level 4
+when stopped, with the slowest decision 62–95 ms. `LAYA_ENGINE=native` gave `Laya loaded on the
+CPU`.
 
 ## Speed
 
@@ -449,15 +518,16 @@ worth rerunning when a new wording or a new game gives questions base Laya misre
 
 5. **Cache answers.** Done: see [Answer cache](#answer-cache). More than 99.9% of answers in all
    three games now come from the cache, so a decision usually takes under a millisecond.
-6. **Faster runtimes.** The built-in agent now runs laya-go on the CPU (see
-   [The built-in agent in Go](#the-built-in-agent-in-go)); a Metal engine for laya-go would bring
-   GPU speed back without Python. [laya-mlx](https://github.com/mizorewww/laya-mlx) runs Laya natively on Apple
+6. **Faster runtimes.** Done on Apple silicon: the built-in agent runs laya-go's Metal engine,
+   which answers new sentences faster than the Python server on MPS and in about half the CPU
+   engine's time (see [On the GPU with Metal](#on-the-gpu-with-metal)). Windows, Linux and Intel
+   Macs still run on the CPU. [laya-mlx](https://github.com/mizorewww/laya-mlx) runs Laya natively on Apple
    Silicon (its demo plays Snake; claims of large speedups come from posts comparing it with Jev's
    hosted API, not from the repo); [@receptron/laya](https://github.com/receptron/laya) runs it with ONNX Runtime from
    Node.js. Either could replace the PyTorch server behind the same endpoint.
 7. **Count the model's delay in descriptions.** Frogger and Space Invaders already account for the
-   input limit. They don't yet add the model's own 60–120 ms on a new sentence, which matters most
-   once Frogger's traffic speeds up on level 3.
+   input limit. They don't yet add the model's own delay on a new sentence (30–75 ms on Metal,
+   45–140 ms on the CPU), which matters most once Frogger's traffic speeds up on level 3.
 
 ### Better measurement
 

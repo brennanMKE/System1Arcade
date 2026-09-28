@@ -46,7 +46,8 @@ func TestBuiltinAgent(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	msg, err = a.TestAgent(a.settings)
-	if err != nil || !strings.HasPrefix(msg, `Laya is running in the app: answered "green"`) {
+	if err != nil || !strings.HasPrefix(msg, "Laya is running in the app on the ") ||
+		!strings.Contains(msg, `: answered "green"`) {
 		t.Errorf("TestAgent while running = %q, %v", msg, err)
 	}
 	t.Log(msg)

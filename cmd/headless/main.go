@@ -75,7 +75,11 @@ func main() {
 			log.Fatal(err)
 		}
 		defer local.Close()
-		log.Printf("Laya loaded in %v", time.Since(start).Round(time.Millisecond))
+		name, fallback := local.EngineDetail()
+		if fallback != "" {
+			log.Printf("the Metal GPU engine did not start (%s); using the CPU", fallback)
+		}
+		log.Printf("Laya loaded on %s in %v [%s]", local.Engine(), time.Since(start).Round(time.Millisecond), name)
 		asker = local
 	} else if strings.HasPrefix(*agentFlag, "http://") || strings.HasPrefix(*agentFlag, "https://") {
 		asker = &agent.Client{URL: *agentFlag, Batch: !*noBatch}
@@ -184,9 +188,16 @@ func (t *timing) summary() string {
 			slow++
 		}
 	}
-	q := func(p float64) time.Duration { return ts[min(len(ts)-1, int(p*float64(len(ts))))] }
-	return fmt.Sprintf("%d decisions, mean %.2f ms, p50 %.2f ms, p99 %.1f ms, max %.0f ms, %d over 10 ms",
-		len(ts), ms(sum/time.Duration(len(ts))), ms(q(0.5)), ms(q(0.99)), ms(ts[len(ts)-1]), slow)
+	q := func(ts []time.Duration, p float64) time.Duration { return ts[min(len(ts)-1, int(p*float64(len(ts))))] }
+	line := fmt.Sprintf("%d decisions, mean %.2f ms, p50 %.2f ms, p99 %.1f ms, max %.0f ms, %d over 10 ms",
+		len(ts), ms(sum/time.Duration(len(ts))), ms(q(ts, 0.5)), ms(q(ts, 0.99)), ms(ts[len(ts)-1]), slow)
+	if slow > 0 {
+		// The decisions over 10 ms are about the ones with a new sentence
+		// (an answer cache miss, so a forward pass): the model's speed.
+		misses := ts[len(ts)-slow:]
+		line += fmt.Sprintf(" (p50 %.0f ms, p99 %.0f ms)", ms(q(misses, 0.5)), ms(q(misses, 0.99)))
+	}
+	return line
 }
 
 func ms(d time.Duration) float64 { return float64(d.Microseconds()) / 1000 }

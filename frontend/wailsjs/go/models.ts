@@ -69,6 +69,7 @@ export namespace main {
 	    state: string;
 	    detail: string;
 	    kind: string;
+	    engine?: string;
 	
 	    static createFrom(source: any = {}) {
 	        return new AgentStatus(source);
@@ -79,6 +80,7 @@ export namespace main {
 	        this.state = source["state"];
 	        this.detail = source["detail"];
 	        this.kind = source["kind"];
+	        this.engine = source["engine"];
 	    }
 	}
 	export class Settings {
