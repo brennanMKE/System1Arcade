@@ -26,6 +26,17 @@ The built-in agent no longer needs Python.
   ask thousands of times a second and keep a CPU core busy.
 - `cmd/headless -agent laya` plays with the built-in agent, and `-agent <url>` with a custom one,
   for benchmarks without Python or a window.
+- The app logs the model download's progress (every 10%) and, at the end of each game, how
+  many decisions the agent made and how long they took (median, p99, slowest).
+- **`SYSTEM1_AUTOSTOP_AFTER=<duration>`**, with `SYSTEM1_AUTOSTART`, stops the agent that long
+  after launch, for unattended memory checks. Test-only and off unless set.
+- `scripts/run-agent-vm.sh --builtin` plays with the built-in agent in a VM with no Python on the
+  app's PATH, watching that no Python process ever starts; `--fresh-download` makes the app fetch
+  the model itself, and `--stop-after` measures memory after the agent stops. Verified: all three
+  games played in a VM with no Python, the app started no process, a fresh download matched the
+  host's copy, and stopping the agent took the app from 1.7 GB to 186 MB. In a VM the model runs
+  2.5–6 times slower than on the host, which costs Frogger points (and whole games when the host
+  is busy); Tetris and Space Invaders played as on the host.
 - **`SYSTEM1_SOUND=off`** mutes a session, for automated and autostarted runs, without changing
   the saved sound preference. `scripts/run-agent-vm.sh` sets it.
 - `scripts/build.sh --agent` is now `--python-tools` (`-PythonTools` on Windows), and is only

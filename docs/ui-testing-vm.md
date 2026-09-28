@@ -5,7 +5,8 @@ the Mac someone is using: to play games with a custom agent and collect scores, 
 start screen, Settings and the agent panel.
 
 **Status:** the agent-scoring run ([`scripts/run-agent-vm.sh`](../scripts/run-agent-vm.sh)) works
-end to end, verified on cameron on 2026-09-23. The browser-driven layer (Playwright against
+end to end, verified on cameron on 2026-09-23, and with the built-in agent and no Python
+(`--builtin`, `--fresh-download`) on 2026-09-27. The browser-driven layer (Playwright against
 `wails dev`) and the Linux guest are still plans; everything marked **Unverified** has not been
 run. The Tart setup follows `~/Developer/Homelab/cameron/tart-ui-test-vm.md` (Changeover) and the
 Curator and Switchyard runners.
@@ -63,6 +64,9 @@ scripts/run-agent-vm.sh --games frogger,tetris,invaders --seeds 1,2,3 --cap 600 
 | `--no-build` | build | reuse `build/bin/System 1 Arcade.app` |
 | `--verify FILE`, `--verify-every SECS` | none, 10 | check the agent's answers in the guest (below) |
 | `--agent-url URL` | `http://127.0.0.1:<port>/predict` | point the app at an agent elsewhere, e.g. one on the host at `http://192.168.64.1:8000/predict` |
+| `--builtin` | off | play with the built-in agent: Laya inside the app, no server, no Python ([below](#the-built-in-agent---builtin)) |
+| `--fresh-download` | off | with `--builtin`: share no model, so the app downloads it from Hugging Face |
+| `--stop-after SECS` | off | stop the agent that long after each launch (`SYSTEM1_AUTOSTOP_AFTER`) and record the app's memory afterwards |
 
 The server must be an arm64 macOS binary or a script the guest can run. The guest has no Go
 toolchain, so build Go servers on the host (`GOOS=darwin GOARCH=arm64 go build`); a stub Go binary
@@ -124,7 +128,10 @@ bring every revision plus `blobs/`. The current Laya snapshot is 807 MB in 5 fil
 `first_answer_secs` is how long after launch the game unpaused. An app that never came up is
 recorded as `{"game", "seed", "error"}`. When the agent has `GET /stats` (laya-server and
 `laya_server.py` do), each line also has `answers_per_sec`, `model_calls` and `misses` for that
-game, and `server_rss_mb` / `app_rss_mb` at its end.
+game, and `server_rss_mb` / `app_rss_mb` at its end. Every line also has `app_rss_max_mb`,
+`app_env`, `app_children`, `python_seen` and, from the app's log, `decisions` and
+`latency_median_ms` / `latency_p99_ms` / `latency_max_ms` / `decisions_over_20ms` (see
+[the built-in agent](#the-built-in-agent---builtin)).
 
 `monitor.jsonl` samples every 5 s: the server's and the app's resident memory and CPU, and the
 server's `/stats`. The summary prints the server's memory range and any log line that looks like
@@ -170,6 +177,107 @@ Total 291 s: boot 48, server 14, play 222.
 Timings seen across runs: clone about 1 s (copy-on-write), boot to `tart exec` 24–81 s (slower
 while another VM is busy), app API ready 0.2–4 s after `open`, cleanup a few seconds.
 
+## The built-in agent (`--builtin`)
+
+The phase 4 check of the [Laya Go port](laya-go-port.md): the app plays all three games with its
+built-in agent and no Python.
+
+```sh
+# The host's Laya snapshot, shared read-only
+scripts/run-agent-vm.sh --builtin --games frogger,tetris,invaders --seeds 1,2,3 --cap 600
+
+# No model in the guest: the app downloads it from Hugging Face itself
+scripts/run-agent-vm.sh --fresh-download --games frogger --seeds 1 --cap 600
+
+# Memory once the agent has stopped: stop 60 s after launch, sample for 30 s more
+scripts/run-agent-vm.sh --builtin --games frogger --seeds 1 --stop-after 60
+```
+
+What changes with `--builtin`:
+
+- `settings.json` is `{"agent": "builtin", "batch": true, "inputRate": 6}`; no server is copied
+  or started, and `--verify` is refused (there is no server to check).
+- **The model.** By default the host's copy of the revision the app loads (laya-go's pinned
+  checkpoint, read from its source) is staged like `--model-dir` and shared read-only, and the
+  guest links it where the app looks:
+  `~/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/<revision>` →
+  `/Volumes/My Shared Files/model`. No `SYSTEM1_LAYA_MODEL`, so the app takes its normal path.
+  With `--fresh-download` nothing is shared, the script fails if the guest already has the model,
+  and afterwards it hashes every file the app downloaded and compares them with the host's copy.
+- **No Python.** The app is launched with `--env PATH=/bin:/usr/sbin:/sbin`: none of those has a
+  Python (the golden's `python3` is Homebrew's in `/opt/homebrew/bin`, and `/usr/bin/python3` is
+  the Command Line Tools shim). `no-python.txt` records that `python3` and `python` are not found
+  on that PATH, that the bundle has no file named `*python*`, and the binary's libraries. During
+  every game the guest player samples the process table once a second and records every process
+  the app started (`app_children`) and every Python process other than itself and its own
+  short-lived children (`python_seen`). The harness itself is Python, but it only launches the
+  app and polls it.
+- **The app's environment as it got it.** For each launch the player reads the app's
+  `SYSTEM1_*` variables and `PATH` with `ps -E` (`app_env`), and the summary counts the launches
+  with `SYSTEM1_SOUND=off`. `vm-guest-play.py` always passes `SYSTEM1_SOUND=off` last and refuses
+  an `--env` that sets it.
+- Before playing, `TestBuiltinAgent` runs in the guest (built on the host with `go test -c`):
+  it loads Laya, plays, asks Settings' **Test connection** of the loaded model and checks the
+  model is freed on stop. Skipped with `--fresh-download`, so the app is first to fetch the model.
+- **Speed and memory come from the app.** At the end of each game the agent loop logs
+  `agent: game over in <game> seed <n> at <score> points: <decisions> decisions, median …, p99 …,
+  slowest … ms, <n> over 20 ms` (decisions over 20 ms are about the answer-cache misses), and
+  `vm-guest-play.py` adds those fields to the result, with the app's peak resident memory
+  (`app_rss_max_mb`, sampled every second). The model download is logged every 10%, in the same
+  words as the status line. With `--stop-after`, `app_rss_after_stop_mb` is the app's memory at
+  the end of the settle time.
+- The script logs which other VMs are running, and the host's load, before and after play: the
+  model runs on the guest's CPU, so both change the scores (below).
+
+### Verified runs, 2026-09-27
+
+Built-in agent, default settings (realtime, 6 inputs/s), 8 GB guest with 6 CPUs, every launch
+muted (`SYSTEM1_SOUND=off` in the app's environment in all 25 launches that recorded it) and with
+no Python on its PATH. Scores, with the host's headless results from
+[laya-performance.md](laya-performance.md#the-built-in-agent-in-go) for comparison:
+
+| Game, seed | Run A (no other VM) | Run B (a Switchyard VM running) | Host, headless |
+|---|---|---|---|
+| Frogger 1 | 11,100 | 170 | 20,420 |
+| Frogger 2 | 17,220 | 90 | 24,900 |
+| Frogger 3 | 160 | 140 | 11,230 |
+| Tetris 1 | 54,826 | 54,822 | 56,318 |
+| Tetris 2 | 49,556 | 49,556 | 49,584 |
+| Tetris 3 | 66,142 | 66,418 | 66,342 |
+| Space Invaders 1 | 2,940 | 3,060 | 4,770 |
+| Space Invaders 2 | 2,710 | 2,950 | 3,910 |
+| Space Invaders 3 | 3,910 | 4,850 | 1,960 |
+
+Every game ran to a game over at 57–60 ticks/s (52–57 in run B's short Frogger games); the first
+answer came 0.7–2.4 s after launch.
+
+| Measurement | Result |
+|---|---|
+| Python | none from the app: in 2,712 one-second samples over runs A and B the app started no process at all. Run A's list had 4 entries, none the app's: a `python3` run by hand through `tart exec` to look at results, and three `(Python)` entries, the player's own children between fork and exec (now filtered out); run B's was empty |
+| Decisions, median | 0.06–0.15 ms (answer cache) |
+| Slowest decision per game | Frogger 287–349 ms in run A, 656–850 ms in run B; Tetris 519–774 ms; Space Invaders 234–432 ms (host: 138 ms at most in Frogger) |
+| App memory while playing | 1,715–1,743 MB peak |
+| App memory after the agent stopped (`--stop-after 60`) | 186 MB, from 1,695 MB, within 5 s of the stop |
+| `TestBuiltinAgent` in the guest | passed: loaded, played, "answered green" in 60–68 ms, freed |
+
+**Fresh download** (`--fresh-download`, Frogger seed 1, another VM running): the app's log shows
+the status line's text from `Downloading the Laya model (0 of 807 MB)…` through `(730 of
+807 MB)…` over 10 s, then `downloaded the Laya model (807 MB)` and `Laya loaded in 11.095s`; the
+game unpaused 12.3 s after launch and scored 11,110. The five files in the guest's cache
+(`model.safetensors` as `blobs/891102d3…`, its sha256) match the host's copy byte for byte by
+sha256, with no `.incomplete` file left.
+
+**Frogger is the game the guest's CPU hurts.** Tetris played the host's games within a few
+points, and Space Invaders stayed within its usual spread. Frogger in realtime needs new
+sentences answered quickly: in the guest the model is 2.5–6 times slower than on the host, and
+while the frog waits it acts on an old answer. That cost points in run A and ended games in the
+first 5–30 s when other VMs or builds loaded the host. It is not the app: the same evening
+laya-go's `laya-server` in the guest as a custom agent (a separate process, as on 2026-09-23)
+scored 220, 680 and 8,030, and the built-in agent right after it 1,410, 70 and 90, with the host's
+load average around 30 on 12 cores; the agent loop headless in the guest (`cmd/headless`, no
+window) scored 140, 70 and 210. For Frogger scores comparable with the host's, run with no other
+VM and a quiet host, and compare several seeds.
+
 ## The golden image
 
 `system1-uitest-golden` is a copy-on-write clone of `curator-uitest-golden`, made by the script on
@@ -197,7 +305,8 @@ Nobody answers these, and none of them stopped a run, but they show up in screen
   first time `screencapture` runs through `tart exec`. The capture itself still contains the app
   (no Screen Recording grant was needed), and the alert stays on screen in later captures.
 - **"Allow 'Python' to find devices on local networks?"** appeared once while the built-in agent
-  (the default when no `settings.json` is written) was starting. Loopback (`127.0.0.1`) traffic is
+  (the default when no `settings.json` is written) was starting, when it still ran Python; the
+  built-in agent no longer starts any process. Loopback (`127.0.0.1`) traffic is
   not blocked by Local Network privacy: the example agent and the stub both answered with it
   showing.
 - **"Multiple Extensions Added"** (Xcode) notification, cosmetic.
@@ -222,6 +331,20 @@ seed is logged and the app opens on the start screen as usual. Tests: `go test .
 
 Pass it with `open --env` (macOS 13+), since `open` does not otherwise pass the caller's
 environment to the app.
+
+## `SYSTEM1_AUTOSTOP_AFTER`
+
+A second test-only switch, used with `SYSTEM1_AUTOSTART` and off unless set:
+
+```sh
+SYSTEM1_AUTOSTOP_AFTER=<duration>     # e.g. 60s, 1m30s, or plain seconds
+```
+
+That long after autostart the app calls `App.StopAgent`, the same call the Stop button makes, and
+logs `autostop: agent stopped after …`. The game carries on under keyboard control. It exists to
+measure the app's memory after the built-in agent has freed its model
+(`run-agent-vm.sh --stop-after`). A bad value is logged and nothing is autostarted. Tests:
+`TestParseAutostop` and `TestAutostop` in `autostart_test.go`.
 
 ## `SYSTEM1_SOUND=off`
 

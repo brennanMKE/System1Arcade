@@ -123,7 +123,32 @@ Two cautions:
 **Memory.** The built app used 1.80–1.85 GB (resident) while the built-in agent played (the
 model's weights are held as float32). Stopping the agent frees the model: with the app's agent
 manager in a test process, 1.70–1.72 GB while playing fell to 0.19–0.21 GB after stop, over two
-start/stop rounds.
+start/stop rounds. In the app itself, in a VM (`SYSTEM1_AUTOSTOP_AFTER=60s`), 1.69 GB fell to
+186 MB within 5 s of the stop; peaks while playing were 1.72–1.74 GB.
+
+**In a VM, with no Python** (2026-09-27, [details](ui-testing-vm.md#the-built-in-agent---builtin)).
+`scripts/run-agent-vm.sh --builtin` played all three games, seeds 1–3, twice, in the real app in a
+Tart guest (6 CPUs) with no Python on the app's PATH; the app started no process in any game.
+Default settings, realtime at 6 inputs/s, the game at 57–60 ticks/s:
+
+| Game | Seeds 1 / 2 / 3, run A (no other VM) | Run B (another VM running) | Host, headless (above) |
+|---|---|---|---|
+| Frogger | 11,100 / 17,220 / 160 | 170 / 90 / 140 | 20,420 / 24,900 / 11,230 |
+| Space Invaders | 2,940 / 2,710 / 3,910 | 3,060 / 2,950 / 4,850 | 4,770 / 3,910 / 1,960 |
+| Tetris | 54,826 / 49,556 / 66,142 | 54,822 / 49,556 / 66,418 | 56,318 / 49,584 / 66,342 |
+
+Decisions took 0.06–0.15 ms at the median (the cache), and the slowest per game 234–432 ms in
+Space Invaders, 519–774 ms in Tetris, and in Frogger 287–349 ms in run A and 656–850 ms in run B,
+against at most 138 ms on the host: the guest ran new sentences 2.5–6 times slower than the host,
+more than the 1.5–2× expected, depending on what else the host was running. Tetris and Space
+Invaders don't mind. Frogger does, as the Go-build caution above showed: it lost points in
+run A, and when the host was loaded (other VMs and tests, load average around 30 on 12 cores),
+games ended in the first 5–30 s. The app isn't the cause: under the same load, `laya-server` in
+the guest as a custom agent (its own process) scored 220, 680 and 8,030, and the agent loop
+headless in the guest, with no window, 140, 70 and 210. App Nap played no part: the app holds its
+activity while an agent plays. With no model in the guest, the app downloaded 807 MB in about
+10 s, showing `Downloading the Laya model (X of 807 MB)…`, checked every file's hash (they match
+the host's copy), and was playing 12.3 s after launch (Frogger seed 1: 11,110).
 
 ## Speed
 

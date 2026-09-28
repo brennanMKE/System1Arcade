@@ -46,6 +46,9 @@ func (a *App) startup(ctx context.Context) {
 		}
 	}()
 
+	if os.Getenv(SoundEnv) == "off" {
+		log.Printf("sound is off for this session (%s=off)", SoundEnv)
+	}
 	if spec := os.Getenv(AutostartEnv); spec != "" {
 		if err := a.autostart(spec); err != nil {
 			log.Printf("autostart: %v", err)

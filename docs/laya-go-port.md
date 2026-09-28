@@ -831,6 +831,11 @@ Each phase ends with something testable. Durations are rough, for one person.
 
 - *Milestone:* the app plays all three games with no Python installed. `wails build -platform
   windows/amd64` still works from a Mac.
+- *Verified 2026-09-27:* in a Tart VM, the app played all three games (seeds 1–3, twice) with the
+  built-in agent, no Python on its PATH and no process started, and downloaded the model itself
+  when the guest had none (`scripts/run-agent-vm.sh --builtin`, `--fresh-download`; see
+  [ui-testing-vm.md](ui-testing-vm.md#the-built-in-agent---builtin)). The Windows cross-build
+  still works.
 
 **Phase 5: beyond CPU parity (spikes, then pick)**
 

@@ -2,6 +2,9 @@ package agent
 
 import (
 	"context"
+	"fmt"
+	"log"
+	"slices"
 	"time"
 
 	"system1/internal/engine"
@@ -27,6 +30,12 @@ func Run(ctx context.Context, e *engine.Engine, c Asker, status Status) {
 	e.SetPaused(true)
 	status("starting", "Waiting for the agent's first answer…")
 	first := true
+	var lat latencies
+	defer func() {
+		if st := e.State(); lat.n() > 0 {
+			log.Printf("agent: stopped in %s seed %d at %d points: %s", st.Game, st.Seed, st.Status.Score, lat.summary())
+		}
+	}()
 	sleep := func(d time.Duration) bool {
 		select {
 		case <-ctx.Done():
@@ -38,6 +47,10 @@ func Run(ctx context.Context, e *engine.Engine, c Asker, status Status) {
 	for ctx.Err() == nil {
 		st := e.State()
 		if st.Status.Over {
+			if lat.n() > 0 {
+				log.Printf("agent: game over in %s seed %d at %d points: %s", st.Game, st.Seed, st.Status.Score, lat.summary())
+				lat = latencies{}
+			}
 			if !sleep(2 * time.Second) {
 				return
 			}
@@ -69,6 +82,7 @@ func Run(ctx context.Context, e *engine.Engine, c Asker, status Status) {
 			continue
 		}
 		latency := time.Since(start)
+		lat.add(latency)
 		if first {
 			first = false
 			e.SetPaused(false)
@@ -85,4 +99,27 @@ func Run(ctx context.Context, e *engine.Engine, c Asker, status Status) {
 			}
 		}
 	}
+}
+
+// latencies are one game's decision times, for the log line at its end: an
+// unattended run (scripts/run-agent-vm.sh) reads the built-in agent's speed
+// from it, since the model runs inside the app.
+type latencies struct{ d []time.Duration }
+
+func (l *latencies) add(d time.Duration) { l.d = append(l.d, d) }
+func (l *latencies) n() int              { return len(l.d) }
+
+// summary is "N decisions, median, p99 and slowest in ms, and how many took
+// over 20 ms" (with the built-in agent, about the ones the answer cache missed).
+func (l *latencies) summary() string {
+	d := slices.Sorted(slices.Values(l.d))
+	ms := func(x time.Duration) float64 { return float64(x.Microseconds()) / 1000 }
+	slow := 0
+	for _, x := range d {
+		if x > 20*time.Millisecond {
+			slow++
+		}
+	}
+	return fmt.Sprintf("%d decisions, median %.2f ms, p99 %.1f ms, slowest %.1f ms, %d over 20 ms",
+		len(d), ms(d[len(d)/2]), ms(d[len(d)*99/100]), ms(d[len(d)-1]), slow)
 }

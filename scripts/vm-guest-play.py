@@ -53,6 +53,93 @@ def app_pid():
     return out[0] if out else None
 
 
+def process_table():
+    """{pid: (ppid, command)} for every process in the guest."""
+    out = subprocess.run(["ps", "-axww", "-o", "pid=,ppid=,command="], capture_output=True, text=True).stdout
+    procs = {}
+    for line in out.splitlines():
+        parts = line.split(None, 2)
+        if len(parts) >= 2 and parts[0].isdigit() and parts[1].isdigit():
+            procs[int(parts[0])] = (int(parts[1]), parts[2] if len(parts) == 3 else "")
+    return procs
+
+
+class GameSampler:
+    """Samples one game every second: the app's resident memory, every process the app started,
+    and every Python process in the guest other than this script and its parents (the built-in
+    agent must run with no Python at all)."""
+
+    def __init__(self, every=1.0):
+        self.every, self.stop = every, threading.Event()
+        self.rss = []            # (monotonic, MB)
+        self.children = set()    # commands of the app's descendants
+        self.python = set()      # "pid command" of Python processes not ours
+        self.samples = 0
+        self.env = None          # the app's SYSTEM1_* and PATH, as the app actually got them
+        mine, pid = set(), os.getpid()
+        procs = process_table()
+        while pid and pid not in mine:
+            mine.add(pid)
+            pid = procs.get(pid, (0, ""))[0]
+        self.mine = mine
+        self.thread = threading.Thread(target=self.run, daemon=True)
+
+    def run(self):
+        while not self.stop.is_set():
+            pid = app_pid()
+            procs = process_table()
+            if pid and self.env is None:
+                out = subprocess.run(["ps", "-Eww", "-o", "command=", "-p", str(pid)],
+                                     capture_output=True, text=True).stdout
+                self.env = dict(w.split("=", 1) for w in out.split()
+                                if w.startswith(("SYSTEM1_", "PATH=")) and "=" in w)
+            if pid:
+                rss, _ = usage([pid])
+                if rss is not None:
+                    self.rss.append((time.monotonic(), rss))
+                kids, frontier = set(), {int(pid)}
+                while frontier:
+                    frontier = {p for p, (pp, _) in procs.items() if pp in frontier and p not in kids}
+                    kids |= frontier
+                self.children |= {procs[k][1][:200] for k in kids if k in procs}
+            for p, (pp, cmd) in procs.items():
+                # This script's own short-lived children (ps, open, …) show as "(Python)" between
+                # fork and exec; they are ours, not the app's.
+                if p not in self.mine and pp != os.getpid() and "python" in cmd.lower():
+                    self.python.add(f"{p} (parent {pp}) {cmd[:200]}")
+            self.samples += 1
+            self.stop.wait(self.every)
+
+    def __enter__(self):
+        self.thread.start()
+        return self
+
+    def __exit__(self, *exc):
+        self.stop.set()
+        self.thread.join(timeout=10)
+
+
+def agent_summary(log, timeout=3.0):
+    """The app's "agent: game over …" (or "agent: stopped …") log line for this game, parsed:
+    the decision count and latency the agent loop logs at the end of each game."""
+    import re
+    pat = re.compile(r"agent: (game over|stopped) in \S+ seed -?\d+ at -?\d+ points: (\d+) decisions, "
+                     r"median ([\d.]+) ms, p99 ([\d.]+) ms, slowest ([\d.]+) ms, (\d+) over 20 ms")
+    deadline = time.monotonic() + timeout
+    while True:
+        try:
+            for line in open(log, errors="replace"):
+                m = pat.search(line)
+                if m:
+                    return {"decisions": int(m[2]), "latency_median_ms": float(m[3]), "latency_p99_ms": float(m[4]),
+                            "latency_max_ms": float(m[5]), "decisions_over_20ms": int(m[6])}
+        except OSError:
+            pass
+        if time.monotonic() > deadline:
+            return {}
+        time.sleep(0.2)
+
+
 def close_enough(a, b, tol):
     """a and b are the same JSON value, with numbers allowed to differ by tol."""
     if isinstance(a, bool) or isinstance(b, bool):
@@ -205,10 +292,15 @@ def play(args, game, seed, log_dir, watcher):
     watcher.game = f"{game}:{seed}"
     log = os.path.join(log_dir, f"app-{game}-{seed}.log")
     launched = time.monotonic()
-    subprocess.run(["open", "-n", "-a", args.app,
-                    "--env", f"SYSTEM1_AUTOSTART={game}:{seed}",
-                    "--env", "SYSTEM1_SOUND=off",
-                    "--stdout", log, "--stderr", log], check=True)
+    env = [f"SYSTEM1_AUTOSTART={game}:{seed}"] + list(args.env)
+    if args.stop_after:
+        env.append(f"SYSTEM1_AUTOSTOP_AFTER={args.stop_after}s")
+    env.append("SYSTEM1_SOUND=off")  # always, and last so nothing overrides it
+    cmd = ["open", "-n", "-a", args.app]
+    for e in env:
+        cmd += ["--env", e]
+    sampler = GameSampler().__enter__()
+    subprocess.run(cmd + ["--stdout", log, "--stderr", log], check=True)
 
     # Wait for the app's API, on the right game and seed.
     st, err = None, ""
@@ -223,6 +315,7 @@ def play(args, game, seed, log_dir, watcher):
         st = None
         time.sleep(0.2)
     if st is None:
+        sampler.__exit__()
         quit_app()
         return {"game": game, "seed": seed, "error": f"app API not ready after {args.launch_timeout}s: {err}"}
     api_ready = time.monotonic() - launched
@@ -249,7 +342,15 @@ def play(args, game, seed, log_dir, watcher):
         if st["status"]["over"]:
             ended = "over"
             break
+        if args.stop_after and time.monotonic() - launched > args.stop_after + args.stop_settle:
+            ended = "stopped"
+            break
         time.sleep(args.poll)
+    if args.stop_after and ended != "stopped":
+        # The game ended before the agent was stopped, or since (with no agent it soon does):
+        # keep the app open until the settle time after the stop has passed.
+        while time.monotonic() - launched < args.stop_after + args.stop_settle:
+            time.sleep(0.5)
     played = time.monotonic() - start
     # Realtime aims for 60 ticks/s; a slow guest (or an agent that answers instantly and floods
     # the engine) can fall behind, so report what the game actually got.
@@ -262,8 +363,12 @@ def play(args, game, seed, log_dir, watcher):
         subprocess.run(["screencapture", "-x", os.path.join(log_dir, f"screen-{game}-{seed}.png")],
                        capture_output=True)
     after = watcher.sample()
+    summary = agent_summary(log) if ended == "over" else {}
+    sampler.__exit__()
     watcher.game = None
     quit_app()
+    if ended == "stopped" or args.stop_after:
+        summary = agent_summary(log, timeout=0)
 
     s = last["status"]
     extra = {"app_rss_mb": after.get("app_rss_mb"), "server_rss_mb": after.get("server_rss_mb")}
@@ -273,6 +378,16 @@ def play(args, game, seed, log_dir, watcher):
         extra.update(answers_per_sec=round(answers / played, 1),
                      model_calls=sa["model_calls"] - sb["model_calls"],
                      misses=sa["misses"] - sb["misses"])
+    stop_at = launched + args.stop_after if args.stop_after else None
+    playing = [mb for t, mb in sampler.rss if stop_at is None or t < stop_at]
+    extra.update(summary)
+    extra.update(app_rss_max_mb=max(playing) if playing else None, samples=sampler.samples, app_env=sampler.env,
+                 app_children=sorted(sampler.children), python_seen=sorted(sampler.python))
+    if stop_at:
+        late = [mb for t, mb in sampler.rss if t > stop_at + args.stop_settle / 2]
+        extra.update(stop_after_secs=args.stop_after,
+                     app_rss_after_stop_mb=late[-1] if late else None,
+                     app_rss_after_stop_min_mb=min(late) if late else None)
     return {
         "game": game, "seed": seed, "mode": last["mode"],
         "score": s["score"], "level": s["level"], "lives": s["lives"],
@@ -300,10 +415,19 @@ def main():
     p.add_argument("--verify", help="JSONL of {request, status, response} to check the agent against")
     p.add_argument("--verify-every", type=float, default=10, help="seconds between checks during play (0 = only after)")
     p.add_argument("--tol", type=float, default=1.5e-4, help="allowed difference in answer numbers")
+    p.add_argument("--env", action="append", default=[], metavar="KEY=VALUE",
+                   help="more environment for the app (repeatable), e.g. PATH=/var/empty")
+    p.add_argument("--stop-after", type=float, default=0,
+                   help="stop the agent this many seconds after launch (SYSTEM1_AUTOSTOP_AFTER) and record "
+                        "the app's memory after it; 0 = play to game over")
+    p.add_argument("--stop-settle", type=float, default=30,
+                   help="with --stop-after, seconds to keep sampling after the stop")
     p.add_argument("--no-screenshots", dest="screenshots", action="store_false",
                    help="skip the screenshot taken at the end of each game")
     args = p.parse_args()
 
+    if any(e.split("=", 1)[0] == "SYSTEM1_SOUND" for e in args.env):
+        sys.exit("--env may not set SYSTEM1_SOUND: every launch is muted")
     if not in_vm():
         sys.exit("vm-guest-play.py launches the app and must run inside a VM, never on a host Mac")
 

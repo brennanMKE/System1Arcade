@@ -1,6 +1,6 @@
 #!/bin/zsh
 # run-agent-vm.sh — play games in the real app inside a disposable Tart VM, with a custom agent
-# endpoint, and collect the scores.
+# endpoint or the built-in agent (--builtin), and collect the scores.
 #
 # The app window never opens on the host. Everything that launches it happens in a clone of the
 # golden image, which is deleted when the script exits. See docs/ui-testing-vm.md.
@@ -12,7 +12,9 @@
 #   3. Wait for a free macOS VM slot (Apple allows two running at once), clone, boot headless with
 #      the export (and optionally a model folder) shared read-only.
 #   4. In the guest: install the app, write settings.json (custom agent, batch on), start the agent
-#      server, then for each game and seed launch the app with SYSTEM1_AUTOSTART=<game>:<seed>
+#      server (with --builtin: settings.json picks the built-in agent, the model is linked into
+#      the guest's Hugging Face cache or left for the app to download, and no server runs),
+#      then for each game and seed launch the app with SYSTEM1_AUTOSTART=<game>:<seed>
 #      and SYSTEM1_SOUND=off (muted)
 #      and poll /v1/state until game over or the time cap (scripts/vm-guest-play.py).
 #   5. Pull results.jsonl and the logs back to build/agent-vm/<run-id>/, print a summary.
@@ -41,6 +43,14 @@
 #   --verify-every S    seconds between checks during play, 0 = only after (default: 10)
 #   --memory MB         guest memory (default: 8192)
 #   --slot-timeout S    how long to wait for a free VM slot (default: 3600)
+#   --builtin           play with the built-in agent (Laya inside the app, no agent server, no
+#                       Python): the host's Laya snapshot (or --model-dir) is shared read-only and
+#                       linked into the guest's Hugging Face cache, and the app is launched with a
+#                       PATH that has no Python while every guest process is watched for one
+#   --fresh-download    with --builtin: share no model, so the app downloads it from Hugging Face
+#                       itself; the download is checked against the host's copy afterwards
+#   --stop-after S      stop the agent S seconds after each launch (SYSTEM1_AUTOSTOP_AFTER) and
+#                       record the app's memory after the stop
 #   --no-build          use the existing build/bin/System 1 Arcade.app
 #   --keep-export       keep the staged export folder (for debugging)
 #
@@ -50,6 +60,9 @@
 #     --model-dir ~/.cache/huggingface/hub/models--convaiinnovations--laya/snapshots/<revision>
 #   (Point --model-dir at one snapshot, not the whole cache: symlinks are resolved, so the cache
 #   root would bring every revision plus blobs/.)
+#
+# The built-in agent, all three games, the host's model:
+#   scripts/run-agent-vm.sh --builtin --games frogger,tetris,invaders --seeds 1,2,3 --cap 600
 #
 # Run it in the foreground of a shell; a dropped session costs a clone, nothing more.
 
@@ -73,6 +86,11 @@ GAMES="frogger" SEEDS="1" CAP=300 PORT=8000 INPUT_RATE=6 BATCH=true MEMORY_MB=81
 SERVER="$REPO/agents/custom_agent_example.py"
 SERVER_CMD='python3 custom_agent_example.py --port $PORT'
 SERVER_TIMEOUT=300 MODEL_DIR="" SLOT_TIMEOUT=3600 BUILD=1 KEEP_EXPORT=0 VERIFY="" VERIFY_EVERY=10
+BUILTIN=0 FRESH=0 STOP_AFTER=0
+# The app's PATH for built-in runs: none of these folders has a Python (/usr/bin has the
+# Command Line Tools' python3 shim, so it is left out).
+NO_PYTHON_PATH="/bin:/usr/sbin:/sbin"
+LAYA_REPO_DIR="models--convaiinnovations--laya"
 
 log()  { print -r -- "==> $*"; }
 fail() { print -r -- "!! $*" >&2; exit 1; }
@@ -95,6 +113,9 @@ while (( $# )); do
     --verify-every) VERIFY_EVERY="$2"; shift ;;
     --memory) MEMORY_MB="$2"; shift ;;
     --slot-timeout) SLOT_TIMEOUT="$2"; shift ;;
+    --builtin) BUILTIN=1 ;;
+    --fresh-download) BUILTIN=1 FRESH=1 ;;
+    --stop-after) STOP_AFTER="$2"; shift ;;
     --no-build) BUILD=0 ;;
     --keep-export) KEEP_EXPORT=1 ;;
     -h|--help) usage ;;
@@ -132,7 +153,20 @@ trap 'exit 130' INT TERM
 # --- Preflight ---------------------------------------------------------------
 
 command -v tart >/dev/null || fail "Tart is not installed (brew install cirruslabs/cli/tart)"
-[[ -e "$SERVER" ]] || fail "Agent server not found: $SERVER"
+(( BUILTIN )) || [[ -e "$SERVER" ]] || fail "Agent server not found: $SERVER"
+(( ! BUILTIN )) || [[ -z "$VERIFY" ]] || fail "--verify checks an agent server; the built-in agent has none"
+# The Laya revision the app loads (laya-go's pinned checkpoint), for the guest's cache layout.
+LAYA_REV=""
+if (( BUILTIN )); then
+  LAYA_REV=$(cd "$REPO" && grep -ho 'Revision = "[0-9a-f]\{40\}"' \
+    "$(go list -m -f '{{.Dir}}' github.com/brennanMKE/laya-go)/internal/checkpoint/checkpoint.go" | cut -d'"' -f2)
+  [[ -n "$LAYA_REV" ]] || fail "Could not read laya-go's pinned Laya revision"
+  if (( ! FRESH )) && [[ -z "$MODEL_DIR" ]]; then
+    MODEL_DIR="${HF_HUB_CACHE:-${HF_HOME:-$HOME/.cache/huggingface}/hub}/$LAYA_REPO_DIR/snapshots/$LAYA_REV"
+    [[ -d "$MODEL_DIR" ]] || fail "Laya $LAYA_REV is not in this Mac's Hugging Face cache ($MODEL_DIR); run the app once, or pass --fresh-download"
+  fi
+  (( ! FRESH )) || MODEL_DIR=""
+fi
 [[ -z "$MODEL_DIR" || -d "$MODEL_DIR" ]] || fail "Model folder not found: $MODEL_DIR"
 [[ -z "$VERIFY" || -f "$VERIFY" ]] || fail "Verify file not found: $VERIFY"
 
@@ -170,19 +204,30 @@ T[build]=$(( SECONDS - phase ))
 # Tart's shares don't carry symlinks well, so the app goes in as an archive.
 ditto -c -k --keepParent "$APP" "$EXPORT/app.zip"
 mkdir -p "$EXPORT/server"
-if [[ -d "$SERVER" ]]; then cp -R "$SERVER/." "$EXPORT/server/"; else cp "$SERVER" "$EXPORT/server/"; fi
+if (( ! BUILTIN )); then
+  if [[ -d "$SERVER" ]]; then cp -R "$SERVER/." "$EXPORT/server/"; else cp "$SERVER" "$EXPORT/server/"; fi
+fi
 cp "$REPO/scripts/vm-guest-play.py" "$EXPORT/"
 # Settings' "Test connection" (App.TestAgent) and one decision per game, run in the guest against
 # the agent by testagent_test.go; the guest has no Go, so the test binary is built here.
 (cd "$REPO" && GOOS=darwin GOARCH=arm64 go test -c -o "$EXPORT/system1.test" .) >>"$EXPORT/build.log" 2>&1 \
   || { tail -20 "$EXPORT/build.log" >&2; fail "Building the test binary failed"; }
-PLAY_ARGS="--agent-url $AGENT_URL --server-pid-file $GUEST_RESULTS/server.pid"
+if (( BUILTIN )); then
+  PLAY_ARGS="--env PATH=$NO_PYTHON_PATH"
+else
+  PLAY_ARGS="--agent-url $AGENT_URL --server-pid-file $GUEST_RESULTS/server.pid"
+fi
+(( STOP_AFTER == 0 )) || PLAY_ARGS+=" --stop-after $STOP_AFTER"
 if [[ -n "$VERIFY" ]]; then
   cp "$VERIFY" "$EXPORT/verify.jsonl"
   PLAY_ARGS+=" --verify '$SHARE/run/verify.jsonl' --verify-every $VERIFY_EVERY"
 fi
-print -r -- "{\"agent\": \"custom\", \"url\": \"$AGENT_URL\", \"batch\": $BATCH, \"inputRate\": $INPUT_RATE}" \
-  > "$EXPORT/settings.json"
+if (( BUILTIN )); then
+  print -r -- "{\"agent\": \"builtin\", \"batch\": $BATCH, \"inputRate\": $INPUT_RATE}" > "$EXPORT/settings.json"
+else
+  print -r -- "{\"agent\": \"custom\", \"url\": \"$AGENT_URL\", \"batch\": $BATCH, \"inputRate\": $INPUT_RATE}" \
+    > "$EXPORT/settings.json"
+fi
 print -r -- "$SERVER_CMD" > "$EXPORT/server-cmd"
 
 # A Hugging Face cache is mostly symlinks into blobs/; resolve them. cp -c clones files on APFS,
@@ -266,44 +311,99 @@ gx "set -e
   mkdir -p ~/'Library/Application Support/System 1 Arcade'
   cp '$SHARE/run/settings.json' ~/'Library/Application Support/System 1 Arcade/settings.json'"
 
-log "Starting the agent server: $SERVER_CMD"
-gx "cd ~/server && export PORT=$PORT MODEL_DIR=${(q)GUEST_MODEL_DIR}
-  nohup /bin/zsh -lc \"\$(cat '$SHARE/run/server-cmd')\" > $GUEST_RESULTS/server.log 2>&1 < /dev/null &
-  echo \$! > $GUEST_RESULTS/server.pid"
-
-deadline=$(( SECONDS + SERVER_TIMEOUT ))
-until [[ "$(gx "curl -s -o /dev/null -w '%{http_code}' -m 2 $AGENT_URL" 2>/dev/null || true)" =~ '^[1-5][0-9][0-9]$' ]]; do
-  if ! gx "kill -0 \$(cat $GUEST_RESULTS/server.pid)" >/dev/null 2>&1; then
-    gx "tail -20 $GUEST_RESULTS/server.log" >&2 || true
-    fail "The agent server exited during startup (log above)"
+if (( BUILTIN )); then
+  HF_REPO="$GUEST_HOME/.cache/huggingface/hub/$LAYA_REPO_DIR"
+  if (( FRESH )); then
+    gx "test ! -e '$HF_REPO'" || fail "The guest already has a Laya model in its Hugging Face cache"
+    log "No model in the guest: the app will download Laya $LAYA_REV itself"
+  else
+    # The host's snapshot, shared read-only, where the app looks: the guest's own cache layout.
+    gx "mkdir -p '$HF_REPO/snapshots' && ln -sfn '$SHARE/model' '$HF_REPO/snapshots/$LAYA_REV'
+      ls -lL '$HF_REPO/snapshots/$LAYA_REV/'" | sed 's/^/    /'
   fi
-  (( SECONDS < deadline )) || fail "The agent did not answer at $AGENT_URL within ${SERVER_TIMEOUT}s"
-  sleep 2
-done
-T[server_start]=$(( SECONDS - phase ))
-log "Agent server answering after ${T[server_start]}s"
-
-log "Test connection (App.TestAgent) and one decision per game, from the guest"
-if gx "cd $GUEST_RESULTS && SYSTEM1_TEST_AGENT_URL=$AGENT_URL '$SHARE/run/system1.test' -test.run 'TestAgentLive\$' -test.v > testagent.log 2>&1"; then
-  gx "grep -E 'Connected|answers in' $GUEST_RESULTS/testagent.log" | sed 's/^ */    /'
+  log "No Python for the app: PATH=$NO_PYTHON_PATH, and the app bundle"
+  gx "{ echo \"PATH=$NO_PYTHON_PATH\"
+      for p in python3 python; do echo \"\$p: \$( (PATH=$NO_PYTHON_PATH; command -v \$p) || echo 'not found')\"; done
+      echo 'files named *python* in the app:'; find '/Applications/System 1 Arcade.app' -iname '*python*'
+      echo 'libraries:'; otool -L '/Applications/System 1 Arcade.app/Contents/MacOS/System1' | tail -n +2
+    } > $GUEST_RESULTS/no-python.txt 2>&1; cat $GUEST_RESULTS/no-python.txt | head -4" | sed 's/^/    /'
+  if (( ! FRESH )); then
+    log "Built-in agent test (TestBuiltinAgent: load, play, Test connection, free), from the guest"
+    if gx "cd $GUEST_RESULTS && PATH=$NO_PYTHON_PATH SYSTEM1_SOUND=off '$SHARE/run/system1.test' -test.run 'TestBuiltinAgent\$' -test.v > testagent.log 2>&1"; then
+      gx "grep -E 'Laya is running|^(---|ok|PASS)' $GUEST_RESULTS/testagent.log" | sed 's/^ */    /'
+    else
+      gx "tail -20 $GUEST_RESULTS/testagent.log" >&2 || true
+      log "Built-in agent test FAILED (see testagent.log)"
+    fi
+  fi
+  T[server_start]=0
 else
-  gx "tail -20 $GUEST_RESULTS/testagent.log" >&2 || true
-  log "Test connection FAILED (see testagent.log)"
+  log "Starting the agent server: $SERVER_CMD"
+  gx "cd ~/server && export PORT=$PORT MODEL_DIR=${(q)GUEST_MODEL_DIR}
+    nohup /bin/zsh -lc \"\$(cat '$SHARE/run/server-cmd')\" > $GUEST_RESULTS/server.log 2>&1 < /dev/null &
+    echo \$! > $GUEST_RESULTS/server.pid"
+
+  deadline=$(( SECONDS + SERVER_TIMEOUT ))
+  until [[ "$(gx "curl -s -o /dev/null -w '%{http_code}' -m 2 $AGENT_URL" 2>/dev/null || true)" =~ '^[1-5][0-9][0-9]$' ]]; do
+    if ! gx "kill -0 \$(cat $GUEST_RESULTS/server.pid)" >/dev/null 2>&1; then
+      gx "tail -20 $GUEST_RESULTS/server.log" >&2 || true
+      fail "The agent server exited during startup (log above)"
+    fi
+    (( SECONDS < deadline )) || fail "The agent did not answer at $AGENT_URL within ${SERVER_TIMEOUT}s"
+    sleep 2
+  done
+  T[server_start]=$(( SECONDS - phase ))
+  log "Agent server answering after ${T[server_start]}s"
+
+  log "Test connection (App.TestAgent) and one decision per game, from the guest"
+  if gx "cd $GUEST_RESULTS && SYSTEM1_TEST_AGENT_URL=$AGENT_URL '$SHARE/run/system1.test' -test.run 'TestAgentLive\$' -test.v > testagent.log 2>&1"; then
+    gx "grep -E 'Connected|answers in' $GUEST_RESULTS/testagent.log" | sed 's/^ */    /'
+  else
+    gx "tail -20 $GUEST_RESULTS/testagent.log" >&2 || true
+    log "Test connection FAILED (see testagent.log)"
+  fi
 fi
 
+# Other VMs and host load share the CPU, which slows a model that runs in the guest; note them.
+others() { tart list --format json 2>/dev/null | /usr/bin/python3 -c 'import json,sys; print(", ".join(v["Name"] for v in json.load(sys.stdin) if v.get("State") == "running" and v["Name"] != sys.argv[1]) or "none")' "$CLONE" || true; }
+
 phase=$SECONDS
+log "Other VMs running: $(others); host load $(sysctl -n vm.loadavg | tr -d '{}' | xargs) on $(sysctl -n hw.ncpu) CPUs"
 log "Playing games=$GAMES seeds=$SEEDS cap=${CAP}s"
 set +e
 gx "/usr/bin/python3 '$SHARE/run/vm-guest-play.py' --games ${(q)GAMES} --seeds ${(q)SEEDS} --cap $CAP --results $GUEST_RESULTS $PLAY_ARGS"
 play_rc=$?
 set -e
 T[play]=$(( SECONDS - phase ))
+log "Other VMs running: $(others); host load $(sysctl -n vm.loadavg | tr -d '{}' | xargs) on $(sysctl -n hw.ncpu) CPUs"
 
-gx "kill \$(cat $GUEST_RESULTS/server.pid) 2>/dev/null; pkill -x System1; true" >/dev/null 2>&1 || true
+gx "kill \$(cat $GUEST_RESULTS/server.pid 2>/dev/null) 2>/dev/null; pkill -x System1; true" >/dev/null 2>&1 || true
+
+if (( FRESH )); then
+  # What the app downloaded: every blob's sha256 and the snapshot it linked, to compare with the
+  # host's copy of the same revision.
+  gx "cd '$GUEST_HOME/.cache/huggingface/hub/$LAYA_REPO_DIR' 2>/dev/null && {
+      find . -name '*.incomplete'; ls -lR snapshots refs 2>/dev/null
+      cd snapshots/$LAYA_REV && find -L . -type f | sort | while read f; do shasum -a 256 \"\$f\"; done
+    }" > "$STAGE/guest-model.txt" 2>&1 || true
+fi
 
 # --- Results back ------------------------------------------------------------------
 
 mkdir -p "$RESULTS_DIR"
+if (( FRESH )); then
+  cp "$STAGE/guest-model.txt" "$RESULTS_DIR/" 2>/dev/null || true
+  host_snap="${HF_HUB_CACHE:-${HF_HOME:-$HOME/.cache/huggingface}/hub}/$LAYA_REPO_DIR/snapshots/$LAYA_REV"
+  if [[ -d "$host_snap" ]]; then
+    (cd "$host_snap" && find -L . -type f | sort | while read f; do shasum -a 256 "$f"; done) > "$RESULTS_DIR/host-model.sha256"
+    grep -E '^[0-9a-f]{64}  ' "$RESULTS_DIR/guest-model.txt" > "$RESULTS_DIR/guest-model.sha256" || true
+    if [[ -s "$RESULTS_DIR/guest-model.sha256" ]] && cmp -s "$RESULTS_DIR/host-model.sha256" "$RESULTS_DIR/guest-model.sha256"; then
+      log "Download integrity: the guest's $(wc -l < "$RESULTS_DIR/guest-model.sha256" | tr -d ' ') model files match the host's copy (sha256)"
+    else
+      log "Download integrity: MISMATCH with the host's copy (see guest-model.txt, host-model.sha256)"
+    fi
+  fi
+fi
 tart exec "$CLONE" /bin/zsh -lc "tar -C $GUEST_RESULTS -cf - ." | tar -x -C "$RESULTS_DIR"
 cp "$EXPORT/tart-run.log" "$RESULTS_DIR/" 2>/dev/null || true
 [[ -f "$EXPORT/build.log" ]] && cp "$EXPORT/build.log" "$RESULTS_DIR/"
@@ -344,6 +444,27 @@ if os.path.exists(vp):
             ms = sorted(x["ms"] for x in v)
             print(f"verify {phase} play: {sum(x['ok'] for x in v)}/{len(v)} agree, {sum(x['exact'] for x in v)} byte-identical, "
                   f"ms median {ms[len(ms) // 2]} p90 {ms[int(len(ms) * 0.9)]} max {ms[-1]}")
+lat = [r for r in rows if "decisions" in r or "app_rss_max_mb" in r]
+if lat:
+    print(f"{'game':<9} {'seed':>5} {'decisions':>9} {'med ms':>7} {'p99 ms':>7} {'max ms':>7} {'>20ms':>6} {'app MB max':>10} {'after stop':>10}")
+    for r in lat:
+        print(f"{r['game']:<9} {r['seed']:>5} {str(r.get('decisions', '-')):>9} {str(r.get('latency_median_ms', '-')):>7} "
+              f"{str(r.get('latency_p99_ms', '-')):>7} {str(r.get('latency_max_ms', '-')):>7} {str(r.get('decisions_over_20ms', '-')):>6} "
+              f"{str(r.get('app_rss_max_mb', '-')):>10} {str(r.get('app_rss_after_stop_mb', '-')):>10}")
+envs = [r["app_env"] for r in rows if r.get("app_env") is not None]
+if envs:
+    loud = sum(e.get("SYSTEM1_SOUND") != "off" for e in envs)
+    paths = sorted({e.get("PATH", "(inherited)") for e in envs})
+    print(f"app environment seen in {len(envs)} launch(es): SYSTEM1_SOUND=off in {len(envs) - loud}"
+          f"{' — NOT MUTED in ' + str(loud) if loud else ''}; PATH {', '.join(paths)}")
+py = sorted({p for r in rows for p in r.get("python_seen", [])})
+kids = sorted({c for r in rows for c in r.get("app_children", [])})
+samples = sum(r.get("samples", 0) for r in rows)
+if samples:
+    print(f"process samples: {samples}; Python processes seen (other than the harness): {len(py)}; "
+          f"processes the app started: {len(kids)}")
+    for x in py + kids:
+        print(f"    {x}")
 mp = os.path.join(d, "monitor.jsonl")
 if os.path.exists(mp):
     rss = [m["server_rss_mb"] for m in map(json.loads, open(mp)) if m.get("server_rss_mb")]

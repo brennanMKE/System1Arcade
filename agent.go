@@ -171,13 +171,7 @@ func (m *agentManager) stop() {
 // a local directory or a Hugging Face repo.
 func loadLaya(ctx context.Context, set agent.Status) (*agent.Local, error) {
 	set("starting", "Loading the Laya model…")
-	opts := laya.Options{Progress: func(p hub.Progress) {
-		if p.Total > 0 && p.Done >= p.Total {
-			set("starting", "Loading the Laya model…")
-			return
-		}
-		set("starting", fmt.Sprintf("Downloading the Laya model (%d of %d MB)…", p.Done>>20, (p.Total+1<<19)>>20))
-	}}
+	opts := laya.Options{Progress: downloadProgress(set, log.Printf)}
 	if v := os.Getenv("SYSTEM1_LAYA_MODEL"); v != "" {
 		if st, err := os.Stat(v); err == nil && st.IsDir() {
 			opts.Dir = v
@@ -192,6 +186,33 @@ func loadLaya(ctx context.Context, set agent.Status) (*agent.Local, error) {
 	}
 	log.Printf("built-in agent: Laya loaded in %v", time.Since(start).Round(time.Millisecond))
 	return local, nil
+}
+
+// downloadProgress shows a model download in the status line, and logs the
+// same text at the start, every 10% and at the end, so unattended runs can
+// follow it too.
+func downloadProgress(set agent.Status, logf func(string, ...any)) func(hub.Progress) {
+	logged := -1 // tenths of the download last logged
+	return func(p hub.Progress) {
+		if p.Total > 0 && p.Done >= p.Total {
+			if logged < 10 {
+				logged = 10
+				logf("built-in agent: downloaded the Laya model (%d MB)", (p.Total+1<<19)>>20)
+			}
+			set("starting", "Loading the Laya model…")
+			return
+		}
+		detail := fmt.Sprintf("Downloading the Laya model (%d of %d MB)…", p.Done>>20, (p.Total+1<<19)>>20)
+		tenth := 0
+		if p.Total > 0 {
+			tenth = int(p.Done * 10 / p.Total)
+		}
+		if tenth > logged {
+			logged = tenth
+			logf("built-in agent: %s", detail)
+		}
+		set("starting", detail)
+	}
 }
 
 // testBuiltin describes the built-in agent for Settings' "Test connection":

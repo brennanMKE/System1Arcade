@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -55,5 +56,30 @@ func TestBuiltinAgent(t *testing.T) {
 	a.agent.mu.Unlock()
 	if local != nil || a.AgentStatus().State != "off" {
 		t.Errorf("after stop: model still held (%v) or status %+v", local != nil, a.AgentStatus())
+	}
+}
+
+// TestDownloadProgress checks the status line during a model download and
+// that the log gets it at the start, every 10% and at the end, not per chunk.
+func TestDownloadProgress(t *testing.T) {
+	var status []string
+	var logs []string
+	report := downloadProgress(func(state, detail string) { status = append(status, detail) },
+		func(format string, args ...any) { logs = append(logs, fmt.Sprintf(format, args...)) })
+	const total = 800 << 20
+	for done := int64(0); done < total; done += 1 << 20 {
+		report(hub.Progress{File: "model.safetensors", Done: done, Total: total})
+	}
+	report(hub.Progress{File: "model.safetensors", Done: total, Total: total})
+	if got, want := status[1], "Downloading the Laya model (1 of 800 MB)…"; got != want {
+		t.Errorf("status = %q, want %q", got, want)
+	}
+	if got := status[len(status)-1]; got != "Loading the Laya model…" {
+		t.Errorf("last status = %q", got)
+	}
+	if len(logs) != 11 || logs[0] != "built-in agent: Downloading the Laya model (0 of 800 MB)…" ||
+		logs[5] != "built-in agent: Downloading the Laya model (400 of 800 MB)…" ||
+		logs[10] != "built-in agent: downloaded the Laya model (800 MB)" {
+		t.Errorf("logged %d lines: %q", len(logs), logs)
 	}
 }

@@ -33,33 +33,32 @@ func TestParseAutostart(t *testing.T) {
 	}
 }
 
+func TestParseAutostop(t *testing.T) {
+	for _, tc := range []struct {
+		in   string
+		want time.Duration
+		ok   bool
+	}{
+		{"90s", 90 * time.Second, true},
+		{"1m30s", 90 * time.Second, true},
+		{" 45 ", 45 * time.Second, true},
+		{"0.5", 500 * time.Millisecond, true},
+		{"", 0, false},
+		{"0", 0, false},
+		{"-5s", 0, false},
+		{"soon", 0, false},
+	} {
+		d, err := parseAutostop(tc.in)
+		if (err == nil) != tc.ok || d != tc.want {
+			t.Errorf("parseAutostop(%q) = %v, %v", tc.in, d, err)
+		}
+	}
+}
+
 // TestAutostartStartsCustomAgent checks that autostart loads the seeded game
 // and that the custom agent from Settings then plays it.
 func TestAutostartStartsCustomAgent(t *testing.T) {
-	agentSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body map[string]map[string]struct {
-			Questions map[string]struct {
-				Type     string            `json:"type"`
-				Criteria map[string]string `json:"criteria"`
-			} `json:"questions"`
-		}
-		json.NewDecoder(r.Body).Decode(&body)
-		answers := map[string]any{}
-		for key, p := range body["batch"] {
-			for name, q := range p.Questions {
-				if q.Type == "noul" {
-					answers[key+"."+name] = map[string]any{"type": "noul", "noul": 0.5}
-					continue
-				}
-				probs := map[string]float64{}
-				for o := range q.Criteria {
-					probs[o] = 0.5
-				}
-				answers[key+"."+name] = map[string]any{"type": "choice", "choice": "safe", "probabilities": probs}
-			}
-		}
-		json.NewEncoder(w).Encode(map[string]any{"answers": answers})
-	}))
+	agentSrv := httptest.NewServer(http.HandlerFunc(safeAgent))
 	defer agentSrv.Close()
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -79,6 +78,45 @@ func TestAutostartStartsCustomAgent(t *testing.T) {
 	if st := a.engine.State(); st.Game != "frogger" || st.Seed != 42 {
 		t.Fatalf("loaded %s seed %d, want frogger seed 42", st.Game, st.Seed)
 	}
+	waitPlaying(t, a)
+}
+
+// TestAutostop checks that SYSTEM1_AUTOSTOP_AFTER stops the autostarted
+// agent after that long, and that a bad value is reported without starting it.
+func TestAutostop(t *testing.T) {
+	agentSrv := httptest.NewServer(http.HandlerFunc(safeAgent))
+	defer agentSrv.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	a := &App{ctx: ctx, engine: engine.New(),
+		settings: Settings{Agent: "custom", URL: agentSrv.URL, Batch: true}}
+	a.engine.SetPaused(true)
+	go a.engine.Run(ctx)
+	defer a.agent.stop()
+
+	t.Setenv(AutostopEnv, "soon")
+	if err := a.autostart("frogger:1"); err == nil || !strings.Contains(err.Error(), AutostopEnv) {
+		t.Fatalf("autostart with a bad %s: %v", AutostopEnv, err)
+	}
+	if s := a.AgentStatus(); s.State != "off" {
+		t.Fatalf("agent started despite a bad %s: %+v", AutostopEnv, s)
+	}
+	t.Setenv(AutostopEnv, "700ms")
+	if err := a.autostart("frogger:1"); err != nil {
+		t.Fatal(err)
+	}
+	waitPlaying(t, a)
+	deadline := time.Now().Add(5 * time.Second)
+	for a.AgentStatus().State != "off" {
+		if time.Now().After(deadline) {
+			t.Fatalf("agent not stopped: %+v", a.AgentStatus())
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func waitPlaying(t *testing.T, a *App) {
+	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for a.AgentStatus().State != "running" || a.engine.State().Paused {
 		if time.Now().After(deadline) {
@@ -86,6 +124,32 @@ func TestAutostartStartsCustomAgent(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
+}
+
+// safeAgent is a custom agent that answers every choice "safe".
+func safeAgent(w http.ResponseWriter, r *http.Request) {
+	var body map[string]map[string]struct {
+		Questions map[string]struct {
+			Type     string            `json:"type"`
+			Criteria map[string]string `json:"criteria"`
+		} `json:"questions"`
+	}
+	json.NewDecoder(r.Body).Decode(&body)
+	answers := map[string]any{}
+	for key, p := range body["batch"] {
+		for name, q := range p.Questions {
+			if q.Type == "noul" {
+				answers[key+"."+name] = map[string]any{"type": "noul", "noul": 0.5}
+				continue
+			}
+			probs := map[string]float64{}
+			for o := range q.Criteria {
+				probs[o] = 0.5
+			}
+			answers[key+"."+name] = map[string]any{"type": "choice", "choice": "safe", "probabilities": probs}
+		}
+	}
+	json.NewEncoder(w).Encode(map[string]any{"answers": answers})
 }
 
 // TestSoundOff checks that SYSTEM1_SOUND=off reaches the UI through Setup.
