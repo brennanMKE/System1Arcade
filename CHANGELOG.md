@@ -3,7 +3,7 @@
 Release notes for each version. `scripts/publish-release.sh` uses the section for the version
 being released.
 
-## Unreleased
+## 0.2.0
 
 The built-in agent no longer needs Python.
 
