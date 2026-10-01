@@ -3,6 +3,15 @@
 Release notes for each version. `scripts/publish-release.sh` uses the section for the version
 being released.
 
+## Unreleased
+
+- **Contributor docs, and Windows and Linux contributions welcome.** `CONTRIBUTING.md` covers
+  reporting issues, building, tests, style and pull requests. [Windows and
+  Linux](docs/windows-linux.md) is a guide for contributors on those platforms: what is known to
+  build (the Windows app cross-compiles from macOS; neither platform has been run), prerequisites,
+  how to build and test, lockstep headless scores that must match the Mac's exactly, the
+  platform-specific code to check, a release proposal and a checklist for a first PR.
+
 ## 0.2.1
 
 The built-in agent runs on the GPU on Apple silicon Macs.

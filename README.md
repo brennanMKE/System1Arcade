@@ -32,6 +32,9 @@ question, and the plain-English description it was given ("Model sees").
 - [Releasing](docs/releasing.md): the signed, notarized DMG and the GitHub release
 - [UI testing in a Tart VM](docs/ui-testing-vm.md): running the app window inside a disposable
   macOS VM, never on the Mac in use, and scoring a custom agent there with `scripts/run-agent-vm.sh`
+- [Windows and Linux](docs/windows-linux.md): building, testing and measuring the app on Windows
+  and Linux, which haven't been run yet, and what a first PR should report
+- [Contributing](CONTRIBUTING.md): issues, tests, code style and pull requests
 
 ## Quick start
 
@@ -276,3 +279,12 @@ go test . ./internal/...   # includes an oracle-ceiling test for every game and 
   [Laya performance](docs/laya-performance.md#the-built-in-agent-in-go)). Its speed on Windows and
   Linux, where no Accelerate framework exists, hasn't been measured.
 - The build scripts are tested on macOS; the Linux and Windows paths haven't been run yet.
+
+## Contributing
+
+Contributions are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md).
+
+**Windows and Linux contributions are especially welcome.** The maintainer only has Macs, so the
+app has never been run on Windows or Linux. If you can build it, play it, measure it or fix it on
+either, [Windows and Linux](docs/windows-linux.md) has the status, build and test steps, the
+numbers to compare against, and a checklist for your PR.

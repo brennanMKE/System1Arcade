@@ -51,3 +51,6 @@ so macOS doesn't flag it as downloaded.
 Not released yet. The Windows app cross-compiles from a Mac (`wails build -platform
 windows/amd64`), but it isn't code-signed, so SmartScreen would warn. Linux needs GTK and
 WebKitGTK, so it has to be built on Linux, in CI or a Linux VM.
+
+See [Windows and Linux](windows-linux.md#releasing-a-proposal) for the current status and a
+proposed release path, and for how to contribute one.
