@@ -68,8 +68,15 @@
 
 set -euo pipefail
 
-GOLDEN="system1-uitest-golden"
-GOLDEN_FROM="curator-uitest-golden"   # created from this once if missing; never changed
+# ONE shared golden for every project on this host, resolved -- never a literal.
+# A hardcoded image name is exactly how seven 68 GB goldens (477 GB) appeared on
+# cameron; see Homelab protocols/tart-golden/PROTOCOL.md. `require` asserts the
+# Xcode floor and fails in one second, not twenty minutes into a build.
+command -v tart-golden >/dev/null 2>&1 || {
+  echo "tart-golden not found on PATH (MacRoot Root/bin) -- see Homelab protocols/tart-golden/PROTOCOL.md" >&2
+  exit 1
+}
+GOLDEN="$(tart-golden require --xcode 27.0)"
 PREFIX="system1-agent"
 REPO="${0:A:h:h}"
 APP="$REPO/build/bin/System 1 Arcade.app"
@@ -173,11 +180,13 @@ fi
 # Not grep -q: it exits at the first match, and under pipefail the SIGPIPE to tart fails the test.
 vm_exists() { tart list --quiet 2>/dev/null | grep -x -- "$1" >/dev/null; }
 
-if ! vm_exists "$GOLDEN"; then
-  vm_exists "$GOLDEN_FROM" || fail "Neither $GOLDEN nor $GOLDEN_FROM exists (see docs/ui-testing-vm.md)"
-  log "Creating $GOLDEN from $GOLDEN_FROM (APFS copy-on-write; $GOLDEN_FROM is not changed)"
-  tart clone "$GOLDEN_FROM" "$GOLDEN"
-fi
+# NO AUTO-CREATE. This used to clone a missing golden from curator-uitest-golden,
+# and that is precisely how cameron accumulated SEVEN golden images at 68 GB each
+# -- 477 GB, over half the disk. Every project auto-creating "its own" golden from
+# a neighbour's is the bug, not the convenience. `tart-golden require` above has
+# already failed with an actionable message if the shared golden is missing, so by
+# here it exists. See Homelab protocols/tart-golden/PROTOCOL.md.
+vm_exists "$GOLDEN" || fail "golden '$GOLDEN' vanished between resolution and use"
 
 free_kb=$(df -k "$HOME/.tart" | awk 'NR == 2 { print $4 }')
 (( free_kb / 1024 / 1024 >= 20 )) || fail "Only $((free_kb / 1024 / 1024)) GiB free — need at least 20 GiB"
